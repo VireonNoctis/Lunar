@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 
-from cogs.utilities.emoji import EMOJI
+from utilities.emoji import EMOJI
 
 
 # ============================================================

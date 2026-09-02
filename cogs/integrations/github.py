@@ -15,13 +15,13 @@ from ..utilities.emoji import EMOJI
 # ============================================================
 
 # The ONE GitHub repository to monitor.
-GITHUB_REPO = "https://github.com/OWNER/REPOSITORY"
+GITHUB_REPO = "https://github.com/VireonNoctis/Lunar/"
 
 # Discord channel where commit embeds are sent.
-CHANNEL_ID = 123456789012345678
+CHANNEL_ID = 1489719944135442607
 
 # GitHub polling interval in seconds.
-CHECK_INTERVAL = 60
+CHECK_INTERVAL = 25
 
 # Maximum changed files shown inside the embed.
 MAX_FILE_PREVIEW = 6

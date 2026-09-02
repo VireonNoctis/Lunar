@@ -1,42 +1,53 @@
+from __future__ import annotations
+
 import asyncio
 import logging
+import os
 from typing import Optional
 
 import aiohttp
 import discord
+
 from discord import app_commands
 from discord.ext import commands
 
-from cogs.utilities.database import db
+from utilities.database import db
 from cogs.utilities.emoji import EMOJI
 from cogs.utilities.generate_code import generate_code
 
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger("lunar.link")
 
 
-# ═══════════════════════════════════════════════
-# Configuration
-# ═══════════════════════════════════════════════
+# ============================================================
+# CONFIG
+# ============================================================
 
 LUNAR_API_BASE = "https://api.lunarx.to"
 
+LUNAR_PROFILE_ENDPOINT = (
+    f"{LUNAR_API_BASE}/api/animes/profile"
+)
+
+LUNAR_NOTIFICATION_ENDPOINT = (
+    f"{LUNAR_API_BASE}/api/notification/admin-send"
+)
+
 LINK_GUILD_ID = 1330574273760465029
-LINKED_ROLE_ID = 1403390546164187217
+VERIFIED_ROLE_ID = 1403390546164187217
 
-# Replace these with your existing configuration values.
-BYPASS_TOKEN = "bypass_token"
-LUNAR_TOKEN = "lunar_token"
+LUNAR_BYPASS_TOKEN = os.getenv(
+    "LUNAR_BYPASS_TOKEN"
+)
 
-# Fake UX delay.
-# These are intentionally longer than the actual requests
-# so the process feels deliberate and polished.
-FAKE_LOADING_TIME = 3.5
+LUNAR_TOKEN = os.getenv(
+    "LUNAR_TOKEN"
+)
 
 
-# ═══════════════════════════════════════════════
-# Lunar → Discord Role Mapping
-# ═══════════════════════════════════════════════
+# ============================================================
+# ROLE MAP
+# ============================================================
 
 LUNAR_ROLE_MAP = {
     "admin": {
@@ -65,172 +76,195 @@ LUNAR_ROLE_MAP = {
         "name": "Manga",
     },
     "user": {
-        "id": 1403390546164187217,
-        "emoji": "🤵",
+        "id": VERIFIED_ROLE_ID,
+        "emoji": "👤",
         "name": "User",
     },
 }
 
 
-# ═══════════════════════════════════════════════
-# Shared Embed Helpers
-# ═══════════════════════════════════════════════
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+FAKE_LOADING_TIME = 3.0
+ROLE_SYNC_COOLDOWN = 30.0
+LINK_SESSION_TIMEOUT = 600
+
+
+# ============================================================
+# EMBEDS
+# ============================================================
 
 def make_embed(
     title: str,
     description: str,
+    *,
+    color: discord.Color | None = None,
 ) -> discord.Embed:
-    """Create a consistent Lunar-style embed."""
 
     embed = discord.Embed(
         title=title,
         description=description,
+        color=color or discord.Color.blurple(),
+        timestamp=discord.utils.utcnow(),
     )
 
     embed.set_footer(
-        text="✨ Lunar Sync • Made by Vireon"
+        text="Lunar Sync • Imperial Systems"
     )
 
     return embed
 
 
-# ═══════════════════════════════════════════════
-# Username Modal
-# ═══════════════════════════════════════════════
+# ============================================================
+# HELPERS
+# ============================================================
+
+def normalize_username(
+    username: str,
+) -> str:
+
+    return username.strip()
+
+
+def normalize_code(
+    code: str,
+) -> str:
+
+    return code.strip().upper()
+
+
+def get_profile_roles(
+    profile: dict,
+) -> set[str]:
+
+    raw_roles = (
+        profile.get("role")
+        or ""
+    )
+
+    if not isinstance(
+        raw_roles,
+        str,
+    ):
+        return set()
+
+    return {
+        role.strip().lower()
+        for role in raw_roles.split("|")
+        if role.strip()
+    }
+
+
+# ============================================================
+# USERNAME MODAL
+# ============================================================
 
 class LinkUsernameModal(
     discord.ui.Modal,
-    title="Link Lunar Anime Account",
+    title="Link Lunar Account",
 ):
+
     username = discord.ui.TextInput(
-        label="Lunar Anime Username",
+        label="Lunar Username",
         placeholder="Enter your Lunar Anime username...",
         min_length=1,
         max_length=64,
         required=True,
     )
 
-    def __init__(self, cog: "LinkAccount"):
+    def __init__(
+        self,
+        cog: "LinkAccount",
+    ):
         super().__init__()
+
         self.cog = cog
 
     async def on_submit(
         self,
         interaction: discord.Interaction,
     ) -> None:
+
+        username = normalize_username(
+            str(
+                self.username.value
+            )
+        )
+
         await interaction.response.defer(
             ephemeral=True
         )
 
         await self.cog.start_link(
             interaction,
-            self.username.value.strip(),
+            username,
         )
 
 
-# ═══════════════════════════════════════════════
-# Verification Code Modal
-# ═══════════════════════════════════════════════
+# ============================================================
+# VERIFICATION MODAL
+# ============================================================
 
 class LinkCodeModal(
     discord.ui.Modal,
-    title="Verify Lunar Anime Account",
+    title="Verify Lunar Account",
 ):
+
     code = discord.ui.TextInput(
         label="Verification Code",
-        placeholder="Paste the code from Lunar notifications...",
+        placeholder="Paste the code from your Lunar notifications...",
         min_length=1,
         max_length=256,
         required=True,
     )
 
-    def __init__(self, cog: "LinkAccount"):
+    def __init__(
+        self,
+        cog: "LinkAccount",
+    ):
         super().__init__()
+
         self.cog = cog
 
     async def on_submit(
         self,
         interaction: discord.Interaction,
     ) -> None:
+
+        code = normalize_code(
+            str(
+                self.code.value
+            )
+        )
+
         await interaction.response.defer(
             ephemeral=True
         )
 
         await self.cog.verify_link(
             interaction,
-            self.code.value.strip(),
+            code,
         )
 
 
-# ═══════════════════════════════════════════════
-# Role Sync View
-# ═══════════════════════════════════════════════
+# ============================================================
+# VERIFICATION VIEW
+# ============================================================
 
-class RoleSyncView(discord.ui.View):
-    def __init__(self, cog: "LinkAccount"):
-        super().__init__(timeout=300)
+class VerificationView(
+    discord.ui.View
+):
 
-        self.cog = cog
-
-    @discord.ui.button(
-        label="Sync My Roles",
-        style=discord.ButtonStyle.success,
-        emoji="✨",
-    )
-    async def sync_roles(
+    def __init__(
         self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-        await self.cog.sync_roles(interaction)
+        cog: "LinkAccount",
+    ):
 
-    @discord.ui.button(
-        label="Skip",
-        style=discord.ButtonStyle.secondary,
-        emoji="⏭️",
-    )
-    async def skip_roles(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-        embed = make_embed(
-            f"{EMOJI['approved']} Account Linked",
-            (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['lunar']} **Lunar Account**\n"
-                "> Your Lunar Anime account is linked successfully.\n\n"
-                f"{EMOJI['approved']} **Verification**\n"
-                "> Your account has been verified.\n\n"
-                f"⏭️ **Role Sync**\n"
-                "> Skipped for now.\n\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                "You can synchronize your Lunar roles later."
-            ),
+        super().__init__(
+            timeout=LINK_SESSION_TIMEOUT
         )
-
-        embed.set_thumbnail(
-            url=interaction.user.display_avatar.url
-        )
-
-        await interaction.response.edit_message(
-            content=None,
-            embed=embed,
-            view=None,
-        )
-
-    async def on_timeout(self) -> None:
-        for item in self.children:
-            item.disabled = True
-
-
-# ═══════════════════════════════════════════════
-# Verification View
-# ═══════════════════════════════════════════════
-
-class VerificationView(discord.ui.View):
-    def __init__(self, cog: "LinkAccount"):
-        super().__init__(timeout=600)
 
         self.cog = cog
 
@@ -243,56 +277,193 @@ class VerificationView(discord.ui.View):
         self,
         interaction: discord.Interaction,
         button: discord.ui.Button,
-    ) -> None:
+    ):
+
         await interaction.response.send_modal(
-            LinkCodeModal(self.cog)
+            LinkCodeModal(
+                self.cog
+            )
         )
 
-    async def on_timeout(self) -> None:
+    @discord.ui.button(
+        label="Cancel",
+        style=discord.ButtonStyle.secondary,
+        emoji="✖️",
+    )
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        embed = make_embed(
+            f"{EMOJI['denied']} Linking Cancelled",
+            (
+                "Your Lunar account linking session "
+                "has been cancelled."
+            ),
+            color=discord.Color.dark_grey(),
+        )
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=embed,
+            view=None,
+        )
+
+    async def on_timeout(
+        self,
+    ) -> None:
+
         for item in self.children:
             item.disabled = True
 
 
-# ═══════════════════════════════════════════════
-# Link Account Cog
-# ═══════════════════════════════════════════════
+# ============================================================
+# ROLE SYNC VIEW
+# ============================================================
 
-class LinkAccount(commands.Cog):
-    """Interactive Lunar Anime account linking."""
+class RoleSyncView(
+    discord.ui.View
+):
 
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-        self.session: Optional[aiohttp.ClientSession] = None
+    def __init__(
+        self,
+        cog: "LinkAccount",
+    ):
 
-    # ═══════════════════════════════════════════
-    # Lifecycle
-    # ═══════════════════════════════════════════
-
-    async def cog_load(self) -> None:
-        self.session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=15)
+        super().__init__(
+            timeout=300
         )
 
-    async def cog_unload(self) -> None:
-        if self.session and not self.session.closed:
+        self.cog = cog
+
+    @discord.ui.button(
+        label="Sync My Roles",
+        style=discord.ButtonStyle.success,
+        emoji="🔄",
+    )
+    async def sync_roles(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        await self.cog.sync_roles(
+            interaction
+        )
+
+    @discord.ui.button(
+        label="Skip",
+        style=discord.ButtonStyle.secondary,
+        emoji="⏭️",
+    )
+    async def skip_roles(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        embed = make_embed(
+            f"{EMOJI['approved']} Account Linked",
+            (
+                f"{EMOJI['lunar']} **Lunar Account**\n"
+                "> Your Lunar Anime account is linked successfully.\n\n"
+                f"{EMOJI['approved']} **Verification**\n"
+                "> Your account has been verified.\n\n"
+                "⏭️ **Role Sync**\n"
+                "> Skipped for now.\n\n"
+                "You can synchronize your Lunar roles later."
+            ),
+            color=discord.Color.green(),
+        )
+
+        embed.set_thumbnail(
+            url=interaction.user.display_avatar.url
+        )
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=embed,
+            view=None,
+        )
+
+    async def on_timeout(
+        self,
+    ) -> None:
+
+        for item in self.children:
+            item.disabled = True
+
+
+# ============================================================
+# LINK COG
+# ============================================================
+
+class LinkAccount(
+    commands.Cog
+):
+
+    def __init__(
+        self,
+        bot: commands.Bot,
+    ):
+
+        self.bot = bot
+
+        self.session: Optional[
+            aiohttp.ClientSession
+        ] = None
+
+        self.role_sync_cooldowns: dict[
+            int,
+            float,
+        ] = {}
+
+    # ========================================================
+    # LIFECYCLE
+    # ========================================================
+
+    async def cog_load(
+        self,
+    ) -> None:
+
+        self.session = (
+            aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(
+                    total=15
+                )
+            )
+        )
+
+    async def cog_unload(
+        self,
+    ) -> None:
+
+        if (
+            self.session
+            and not self.session.closed
+        ):
+
             await self.session.close()
 
-    # ═══════════════════════════════════════════
-    # Loading UX
-    # ═══════════════════════════════════════════
+    # ========================================================
+    # LOADING UX
+    # ========================================================
 
     async def loading(
         self,
         interaction: discord.Interaction,
         title: str,
         description: str,
+        *,
         delay: float = FAKE_LOADING_TIME,
     ) -> None:
-        """Display a loading state with a deliberate UX delay."""
 
         embed = make_embed(
             f"{EMOJI['loading']} {title}",
             description,
+            color=discord.Color.blurple(),
         )
 
         await interaction.edit_original_response(
@@ -301,86 +472,133 @@ class LinkAccount(commands.Cog):
             view=None,
         )
 
-        await asyncio.sleep(delay)
+        await asyncio.sleep(
+            delay
+        )
 
-    # ═══════════════════════════════════════════
-    # Lunar API
-    # ═══════════════════════════════════════════
+    # ========================================================
+    # LUNAR PROFILE
+    # ========================================================
 
-    async def fetch_account(
+    async def fetch_profile(
         self,
         username: str,
     ) -> Optional[dict]:
-        """Fetch a Lunar Anime account by username."""
 
         if self.session is None:
             return None
 
+        headers = {}
+
+        if LUNAR_BYPASS_TOKEN:
+            headers[
+                "X-Scraper-Guard-Bypass"
+            ] = LUNAR_BYPASS_TOKEN
+
         try:
+
             async with self.session.get(
-                f"{LUNAR_API_BASE}/api/animes/profile",
+                LUNAR_PROFILE_ENDPOINT,
                 params={
                     "username": username,
                 },
-                headers={
-                    "X-Scraper-Guard-Bypass": BYPASS_TOKEN,
-                },
+                headers=headers,
             ) as response:
 
                 if response.status != 200:
-                    logger.warning(
-                        "Lunar account lookup failed: %s [%s]",
+
+                    log.warning(
+                        "Lunar profile failed: "
+                        "username=%s status=%s",
                         username,
                         response.status,
                     )
+
                     return None
 
-                return await response.json()
+                payload = await response.json()
+
+                if not isinstance(
+                    payload,
+                    dict,
+                ):
+                    return None
+
+                profile = payload.get(
+                    "data"
+                )
+
+                if not isinstance(
+                    profile,
+                    dict,
+                ):
+                    return None
+
+                return profile
 
         except (
             aiohttp.ClientError,
             asyncio.TimeoutError,
         ):
-            logger.exception(
-                "Lunar API request failed for %s",
+
+            log.exception(
+                "Lunar profile request failed: %s",
                 username,
             )
+
             return None
+
+    # ========================================================
+    # LUNAR NOTIFICATION
+    # ========================================================
 
     async def send_notification(
         self,
         username: str,
         code: str,
     ) -> bool:
-        """Send the verification code to Lunar notifications."""
 
         if self.session is None:
             return False
 
+        headers = {
+            "Content-Type": "application/json",
+            "union": "lnr",
+        }
+
+        if LUNAR_BYPASS_TOKEN:
+            headers[
+                "X-Scraper-Guard-Bypass"
+            ] = LUNAR_BYPASS_TOKEN
+
+        if LUNAR_TOKEN:
+            headers[
+                "Authorization"
+            ] = LUNAR_TOKEN
+
+        payload = {
+            "user_identifier": username,
+            "type_": "custom",
+            "content": (
+                "Please send this back "
+                f"!link-code {code}"
+            ),
+        }
+
         try:
+
             async with self.session.post(
-                f"{LUNAR_API_BASE}/api/notification/admin-send",
-                json={
-                    "user_identifier": username,
-                    "type_": "custom",
-                    "content": (
-                        "Please send this back "
-                        f"!link-code {code}"
-                    ),
-                },
-                headers={
-                    "X-Scraper-Guard-Bypass": BYPASS_TOKEN,
-                    "Authorization": LUNAR_TOKEN,
-                    "Content-Type": "application/json",
-                    "union": "lnr",
-                },
+                LUNAR_NOTIFICATION_ENDPOINT,
+                json=payload,
+                headers=headers,
             ) as response:
 
                 if 200 <= response.status < 300:
                     return True
 
-                logger.warning(
-                    "Lunar notification failed for %s: HTTP %s",
+                log.warning(
+                    "Lunar notification failed: "
+                    "username=%s status=%s",
                     username,
                     response.status,
                 )
@@ -391,105 +609,58 @@ class LinkAccount(commands.Cog):
             aiohttp.ClientError,
             asyncio.TimeoutError,
         ):
-            logger.exception(
-                "Failed to send Lunar notification to %s",
+
+            log.exception(
+                "Lunar notification request failed: %s",
                 username,
             )
+
             return False
 
-    # ═══════════════════════════════════════════
-    # Database
-    # ═══════════════════════════════════════════
+    # ========================================================
+    # DATABASE
+    # ========================================================
 
     async def get_link(
         self,
         discord_id: int,
     ):
-        """Get the Discord user's account-link record."""
 
-        result = await db.execute(
-            """
-            SELECT *
-            FROM account_links
-            WHERE snowflake_id = ?
-            """,
-            [str(discord_id)],
+        return await db.account_links.get(
+            str(discord_id)
         )
 
-        return result.one()
-
-    async def save_link(
+    async def get_username(
         self,
         discord_id: int,
-        lunar_uuid,
-        username: str,
-        code: str,
-    ) -> None:
-        """Create a pending Lunar account link."""
+    ) -> Optional[str]:
 
-        await db.execute(
-            """
-            INSERT INTO account_links (
-                snowflake_id,
-                lunar_uuid,
-                verification_code,
-                verified,
-                linked_at,
-                metadata
-            )
-            VALUES (?, ?, ?, ?, toTimestamp(now()), ?)
-            """,
-            [
-                str(discord_id),
-                lunar_uuid,
-                code,
-                False,
-                {
-                    "lunar_username": username,
-                },
-            ],
+        return await db.account_links.get_username(
+            str(discord_id)
         )
 
-    async def mark_verified(
-        self,
-        discord_id: int,
-    ) -> None:
-        """Mark a pending link as verified."""
-
-        await db.execute(
-            """
-            UPDATE account_links
-            SET verified = ?,
-                verified_at = toTimestamp(now())
-            WHERE snowflake_id = ?
-            """,
-            [
-                True,
-                str(discord_id),
-            ],
-        )
-
-    # ═══════════════════════════════════════════
-    # /link
-    # ═══════════════════════════════════════════
+    # ========================================================
+    # /LINK
+    # ========================================================
 
     @app_commands.command(
         name="link",
-        description="Link your Lunar Anime account.",
+        description="Link your Lunar Anime account to Discord.",
     )
     async def link(
         self,
         interaction: discord.Interaction,
     ) -> None:
-        """Open the interactive Lunar account linker."""
 
         await interaction.response.send_modal(
-            LinkUsernameModal(self)
+            LinkUsernameModal(
+                self
+            )
         )
 
-    # ═══════════════════════════════════════════
-    # Start Linking
-    # ═══════════════════════════════════════════
+    # ========================================================
+    # START LINK
+    # ========================================================
 
     async def start_link(
         self,
@@ -497,117 +668,185 @@ class LinkAccount(commands.Cog):
         username: str,
     ) -> None:
 
-        if not username:
-            await interaction.followup.send(
-                f"{EMOJI['error']} "
-                "Please enter a Lunar Anime username.",
-                ephemeral=True,
-            )
-            return
-
-        # ───────────────────────────────────────
-        # Step 1 — Fetch account
-        # ───────────────────────────────────────
+        # ----------------------------------------------------
+        # Fetch Lunar profile
+        # ----------------------------------------------------
 
         await self.loading(
             interaction,
             "Checking Lunar Anime",
             (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['loading']} Connecting to Lunar Anime...\n"
-                "🔍 Looking up your account...\n\n"
-                "━━━━━━━━━━━━━━━━━━━━"
+                f"{EMOJI['loading']} "
+                "Connecting to Lunar Anime...\n"
+                f"{EMOJI['loading']} "
+                "Looking up your account..."
             ),
         )
 
-        account_info = await self.fetch_account(
+        profile = await self.fetch_profile(
             username
         )
 
-        if not account_info:
+        if not profile:
+
             await interaction.edit_original_response(
                 content=None,
                 embed=make_embed(
                     f"{EMOJI['error']} Account Not Found",
                     (
-                        "I couldn't find a Lunar Anime account "
-                        f"matching `{username}`.\n\n"
-                        "Please check the username and try `/link` again."
+                        f"I couldn't find a Lunar Anime account "
+                        f"for `{username}`.\n\n"
+                        "Check the username and try `/link` again."
                     ),
+                    color=discord.Color.red(),
                 ),
             )
+
             return
 
-        # ───────────────────────────────────────
-        # Step 2 — Read account
-        # ───────────────────────────────────────
+        # ----------------------------------------------------
+        # Read actual Lunar identity
+        # ----------------------------------------------------
 
-        await self.loading(
-            interaction,
-            "Reading Account",
-            (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['approved']} Lunar account found\n"
-                f"{EMOJI['loading']} Reading account information...\n"
-                "⬜ Checking existing links\n"
-                "⬜ Preparing verification\n\n"
-                "━━━━━━━━━━━━━━━━━━━━"
-            ),
-            1.5,
+        lunar_username = str(
+            profile.get(
+                "username"
+            )
+            or username
+        ).strip()
+
+        lunar_uuid = profile.get(
+            "user_id"
         )
 
-        try:
-            account_data = account_info["data"]["data"]
-
-            lunar_uuid = account_data["user_id"]
-            lunar_username = account_data.get(
-                "username",
-                username,
-            )
-
-        except (KeyError, TypeError):
-            logger.exception(
-                "Invalid Lunar API response."
-            )
+        if not lunar_uuid:
 
             await interaction.edit_original_response(
                 content=None,
                 embed=make_embed(
-                    f"{EMOJI['error']} Invalid Account Response",
+                    f"{EMOJI['error']} Invalid Lunar Profile",
                     (
-                        "Lunar Anime returned account information "
-                        "that I couldn't process."
+                        "Lunar returned the profile, but "
+                        "no valid account UUID was provided."
                     ),
+                    color=discord.Color.red(),
                 ),
             )
+
             return
 
-        # ───────────────────────────────────────
-        # Step 3 — Database check
-        # ───────────────────────────────────────
+        # ----------------------------------------------------
+        # Existing Discord link
+        # ----------------------------------------------------
 
         await self.loading(
             interaction,
-            "Checking Existing Links",
+            "Checking Existing Link",
             (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['approved']} Lunar account found\n"
-                f"{EMOJI['approved']} Account information loaded\n"
-                f"{EMOJI['loading']} Checking linked accounts...\n"
-                "⬜ Generating verification\n\n"
-                "━━━━━━━━━━━━━━━━━━━━"
+                f"{EMOJI['approved']} "
+                "Lunar account found.\n"
+                f"{EMOJI['loading']} "
+                "Checking your current Discord link..."
             ),
-            1.5,
+        )
+
+        existing = await self.get_link(
+            interaction.user.id
+        )
+
+        if existing:
+
+            existing_uuid = getattr(
+                existing,
+                "lunar_uuid",
+                None,
+            )
+
+            existing_username = (
+                await self.get_username(
+                    interaction.user.id
+                )
+            )
+
+            if (
+                existing_uuid
+                and str(existing_uuid)
+                == str(lunar_uuid)
+                and getattr(
+                    existing,
+                    "verified",
+                    False,
+                )
+            ):
+
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=make_embed(
+                        f"{EMOJI['approved']} Already Linked",
+                        (
+                            f"{EMOJI['lunar']} "
+                            f"**Lunar:** `{existing_username or lunar_username}`\n\n"
+                            f"{EMOJI['approved']} "
+                            "This Lunar account is already "
+                            "linked and verified."
+                        ),
+                        color=discord.Color.green(),
+                    ),
+                )
+
+                return
+
+            if (
+                existing_uuid
+                and str(existing_uuid)
+                != str(lunar_uuid)
+            ):
+
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=make_embed(
+                        f"{EMOJI['denied']} Account Already Linked",
+                        (
+                            "Your Discord account is already "
+                            "linked to a different Lunar account.\n\n"
+                            "Unlink the existing account before "
+                            "linking another one."
+                        ),
+                        color=discord.Color.red(),
+                    ),
+                )
+
+                return
+
+        # ----------------------------------------------------
+        # Check whether Lunar account is already linked
+        # elsewhere
+        # ----------------------------------------------------
+
+        await self.loading(
+            interaction,
+            "Checking Lunar Ownership",
+            (
+                f"{EMOJI['approved']} "
+                "Discord link checked.\n"
+                f"{EMOJI['loading']} "
+                "Making sure this Lunar account isn't "
+                "already linked elsewhere..."
+            ),
         )
 
         try:
-            existing_link = await self.get_link(
-                interaction.user.id
+
+            lunar_existing = (
+                await db.account_links.get_by_lunar_uuid(
+                    lunar_uuid
+                )
             )
 
         except Exception:
-            logger.exception(
-                "Database error while checking account link."
+
+            log.exception(
+                "Failed Lunar UUID lookup."
             )
 
             await interaction.edit_original_response(
@@ -615,61 +854,66 @@ class LinkAccount(commands.Cog):
                 embed=make_embed(
                     f"{EMOJI['error']} Database Error",
                     (
-                        "Something went wrong while checking "
-                        "your existing account link."
+                        "I couldn't verify whether this "
+                        "Lunar account is already linked."
                     ),
+                    color=discord.Color.red(),
                 ),
             )
+
             return
 
-        if existing_link:
-            if (
-                str(existing_link.lunar_uuid)
-                == str(lunar_uuid)
-                and existing_link.verified
-            ):
-                await interaction.edit_original_response(
-                    content=None,
-                    embed=make_embed(
-                        f"{EMOJI['approved']} Already Linked",
-                        (
-                            "━━━━━━━━━━━━━━━━━━━━\n\n"
-                            f"{EMOJI['lunar']} **Lunar Account**\n"
-                            f"> `{lunar_username}`\n\n"
-                            f"{EMOJI['approved']} This account is "
-                            "already linked to your Discord account.\n\n"
-                            "━━━━━━━━━━━━━━━━━━━━"
-                        ),
-                    ),
-                )
-                return
+        if (
+            lunar_existing
+            and str(
+                lunar_existing.snowflake_id
+            ) != str(
+                interaction.user.id
+            )
+        ):
 
-        # ───────────────────────────────────────
-        # Step 4 — Generate verification
-        # ───────────────────────────────────────
+            await interaction.edit_original_response(
+                content=None,
+                embed=make_embed(
+                    f"{EMOJI['denied']} Lunar Account Already Linked",
+                    (
+                        "This Lunar account is already linked "
+                        "to another Discord account.\n\n"
+                        "One Lunar account can only be linked "
+                        "to one Discord account."
+                    ),
+                    color=discord.Color.red(),
+                ),
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # Generate code
+        # ----------------------------------------------------
 
         await self.loading(
             interaction,
             "Generating Verification",
             (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['approved']} Account confirmed\n"
-                f"{EMOJI['loading']} Generating verification code...\n"
-                "🔐 Preparing secure verification request\n\n"
-                "━━━━━━━━━━━━━━━━━━━━"
+                f"{EMOJI['approved']} "
+                "Account ownership checks passed.\n"
+                f"{EMOJI['loading']} "
+                "Generating your verification code..."
             ),
-            2.0,
         )
 
         try:
-            verification_code = generate_code(
+
+            code = generate_code(
                 interaction.user.name,
                 lunar_username,
             )
 
         except Exception:
-            logger.exception(
-                "Failed to generate verification code."
+
+            log.exception(
+                "Verification code generation failed."
             )
 
             await interaction.edit_original_response(
@@ -677,78 +921,45 @@ class LinkAccount(commands.Cog):
                 embed=make_embed(
                     f"{EMOJI['error']} Verification Error",
                     (
-                        "I couldn't generate a verification code.\n\n"
-                        "Please try `/link` again."
+                        "I couldn't generate your verification code."
                     ),
+                    color=discord.Color.red(),
                 ),
             )
+
             return
 
-        # ───────────────────────────────────────
-        # Step 5 — Send notification
-        # ───────────────────────────────────────
+        # ----------------------------------------------------
+        # Save pending link
+        # ----------------------------------------------------
 
         await self.loading(
             interaction,
-            "Contacting Lunar Anime",
+            "Preparing Verification",
             (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['approved']} Account confirmed\n"
-                f"{EMOJI['approved']} Verification generated\n"
-                f"{EMOJI['loading']} Sending Lunar notification...\n"
-                "⬜ Saving verification request\n\n"
-                "━━━━━━━━━━━━━━━━━━━━"
+                f"{EMOJI['approved']} "
+                "Verification generated.\n"
+                f"{EMOJI['loading']} "
+                "Saving your account-link request..."
             ),
-            1.5,
-        )
-
-        notification_sent = await self.send_notification(
-            lunar_username,
-            verification_code,
-        )
-
-        if not notification_sent:
-            await interaction.edit_original_response(
-                content=None,
-                embed=make_embed(
-                    f"{EMOJI['error']} Notification Failed",
-                    (
-                        "I couldn't send the verification request "
-                        "to your Lunar Anime account.\n\n"
-                        "Please try again in a moment."
-                    ),
-                ),
-            )
-            return
-
-        # ───────────────────────────────────────
-        # Step 6 — Save request
-        # ───────────────────────────────────────
-
-        await self.loading(
-            interaction,
-            "Saving Verification",
-            (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['approved']} Lunar notification sent\n"
-                f"{EMOJI['loading']} Saving verification request...\n"
-                "🔗 Preparing account link\n\n"
-                "━━━━━━━━━━━━━━━━━━━━"
-            ),
-            1.5,
         )
 
         try:
-            await self.save_link(
-                discord_id=interaction.user.id,
-                lunar_uuid=lunar_uuid,
-                username=lunar_username,
-                code=verification_code,
+
+            await db.account_links.link(
+                interaction.user.id,
+                lunar_uuid,
+                code,
+                verified=False,
+                metadata={
+                    "username": lunar_username,
+                },
             )
 
         except Exception:
-            logger.exception(
-                "Failed to save pending account link."
+
+            log.exception(
+                "Failed to create account link."
             )
 
             await interaction.edit_original_response(
@@ -756,48 +967,84 @@ class LinkAccount(commands.Cog):
                 embed=make_embed(
                     f"{EMOJI['error']} Database Error",
                     (
-                        "Your verification request couldn't be saved.\n\n"
-                        "Please try `/link` again."
+                        "I couldn't save your verification request."
                     ),
+                    color=discord.Color.red(),
                 ),
             )
+
             return
 
-        # ───────────────────────────────────────
-        # Final waiting screen
-        # ───────────────────────────────────────
+        # ----------------------------------------------------
+        # Send Lunar notification
+        # ----------------------------------------------------
+
+        await self.loading(
+            interaction,
+            "Contacting Lunar",
+            (
+                f"{EMOJI['approved']} "
+                "Verification request saved.\n"
+                f"{EMOJI['loading']} "
+                "Sending your code to Lunar notifications..."
+            ),
+        )
+
+        notification_sent = (
+            await self.send_notification(
+                lunar_username,
+                code,
+            )
+        )
+
+        if not notification_sent:
+
+            # Keep the pending link so a retry can use
+            # the stored code/request if necessary.
+            await interaction.edit_original_response(
+                content=None,
+                embed=make_embed(
+                    f"{EMOJI['error']} Notification Failed",
+                    (
+                        "Your account was found, but Lunar "
+                        "didn't accept the verification notification.\n\n"
+                        "Please try `/link` again."
+                    ),
+                    color=discord.Color.red(),
+                ),
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # Verification screen
+        # ----------------------------------------------------
 
         embed = make_embed(
-            f"{EMOJI['verify']} Verification Required",
+            f"{EMOJI['verify']} Lunar Verification",
             (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['lunar']} **LUNAR ANIME**\n"
-                f"> 👤 **Account:** `{lunar_username}`\n\n"
-                f"{EMOJI['approved']} **Notification Sent**\n"
-                "> A verification request has been sent to "
-                "your Lunar Anime notifications.\n\n"
-                f"{EMOJI['loading']} **Waiting for you...**\n"
-                "> Open Lunar Anime and copy the verification "
-                "code from your notifications.\n\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                "Once you've found it, click:\n"
-                "> ✅ **I've Checked Lunar**\n\n"
-                "Your verification session remains active for "
-                "**10 minutes**."
+                f"{EMOJI['lunar']} **Account Found**\n"
+                f"> `{lunar_username}`\n\n"
+                f"{EMOJI['approved']} **Verification Sent**\n"
+                "> I've sent your verification code to "
+                "your Lunar notifications.\n\n"
+                f"{EMOJI['loading']} **Next Step**\n"
+                "> Open Lunar, find the notification, and "
+                "copy the verification code.\n\n"
+                "Then click **I've Checked Lunar** below."
             ),
+            color=discord.Color.gold(),
         )
 
         embed.add_field(
             name="Verification",
-            value=(
-                f"{EMOJI['loading']} Waiting"
-            ),
+            value="`Waiting for code`",
             inline=True,
         )
 
         embed.add_field(
-            name="Account",
-            value=f"🌙 `{lunar_username}`",
+            name="Session",
+            value="`10 minutes`",
             inline=True,
         )
 
@@ -808,12 +1055,14 @@ class LinkAccount(commands.Cog):
         await interaction.edit_original_response(
             content=None,
             embed=embed,
-            view=VerificationView(self),
+            view=VerificationView(
+                self
+            ),
         )
 
-    # ═══════════════════════════════════════════
-    # Verify Link
-    # ═══════════════════════════════════════════
+    # ========================================================
+    # VERIFY LINK
+    # ========================================================
 
     async def verify_link(
         self,
@@ -821,138 +1070,161 @@ class LinkAccount(commands.Cog):
         code: str,
     ) -> None:
 
-        if not code:
-            await interaction.followup.send(
-                f"{EMOJI['error']} "
-                "Please enter your verification code.",
-                ephemeral=True,
-            )
-            return
-
-        # ───────────────────────────────────────
-        # Step 1 — Load pending request
-        # ───────────────────────────────────────
+        # ----------------------------------------------------
+        # Retrieve account
+        # ----------------------------------------------------
 
         await self.loading(
             interaction,
             "Checking Verification",
             (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['loading']} Loading verification request...\n"
-                "🔐 Preparing credential check\n"
-                "⬜ Confirming account\n\n"
-                "━━━━━━━━━━━━━━━━━━━━"
+                f"{EMOJI['loading']} "
+                "Loading your pending Lunar link..."
             ),
-            1.5,
         )
 
-        try:
-            account_link = await self.get_link(
-                interaction.user.id
-            )
+        account = await self.get_link(
+            interaction.user.id
+        )
 
-        except Exception:
-            logger.exception(
-                "Database error while retrieving account link."
-            )
+        if not account:
 
-            await interaction.edit_original_response(
-                content=None,
-                embed=make_embed(
-                    f"{EMOJI['error']} Database Error",
-                    (
-                        "I couldn't retrieve your verification request."
-                    ),
-                ),
-            )
-            return
-
-        if account_link is None:
             await interaction.edit_original_response(
                 content=None,
                 embed=make_embed(
                     f"{EMOJI['error']} No Verification Found",
                     (
-                        "You don't currently have an active "
-                        "Lunar account-linking request.\n\n"
+                        "You don't currently have a pending "
+                        "Lunar verification request.\n\n"
                         "Start again with `/link`."
                     ),
+                    color=discord.Color.red(),
                 ),
             )
+
             return
 
-        if account_link.verified:
+        if getattr(
+            account,
+            "verified",
+            False,
+        ):
+
             await interaction.edit_original_response(
                 content=None,
                 embed=make_embed(
                     f"{EMOJI['approved']} Already Verified",
                     (
-                        "This Lunar Anime account has already "
-                        "been linked to your Discord account."
+                        "Your Lunar account is already verified "
+                        "and linked to Discord."
                     ),
+                    color=discord.Color.green(),
                 ),
             )
+
             return
 
-        # ───────────────────────────────────────
-        # Step 2 — Compare code
-        # ───────────────────────────────────────
+        expected_code = str(
+            getattr(
+                account,
+                "verification_code",
+                "",
+            )
+            or ""
+        ).strip().upper()
 
-        await self.loading(
-            interaction,
-            "Validating Verification",
-            (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['approved']} Verification request found\n"
-                f"{EMOJI['loading']} Comparing verification code...\n"
-                "🔎 Checking account ownership\n\n"
-                "━━━━━━━━━━━━━━━━━━━━"
-            ),
-            2.0,
-        )
+        if not expected_code:
 
-        if account_link.verification_code != code:
             await interaction.edit_original_response(
                 content=None,
                 embed=make_embed(
-                    f"{EMOJI['denied']} Verification Failed",
+                    f"{EMOJI['error']} Verification Missing",
                     (
-                        "━━━━━━━━━━━━━━━━━━━━\n\n"
-                        "The verification code you entered "
-                        "doesn't match the code associated with "
-                        "your pending request.\n\n"
-                        "Please check your Lunar notifications "
-                        "and try again."
+                        "Your verification request no longer "
+                        "contains a valid verification code.\n\n"
+                        "Please start `/link` again."
                     ),
+                    color=discord.Color.red(),
                 ),
             )
+
             return
 
-        # ───────────────────────────────────────
-        # Step 3 — Verify database record
-        # ───────────────────────────────────────
+        # ----------------------------------------------------
+        # Compare code
+        # ----------------------------------------------------
 
         await self.loading(
             interaction,
-            "Verifying Account",
+            "Validating Code",
             (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['approved']} Verification code matched\n"
-                f"{EMOJI['loading']} Confirming account ownership...\n"
-                "🔗 Finalizing account link\n\n"
-                "━━━━━━━━━━━━━━━━━━━━"
+                f"{EMOJI['approved']} "
+                "Verification request found.\n"
+                f"{EMOJI['loading']} "
+                "Comparing your verification code..."
             ),
-            1.5,
+        )
+
+        if not secrets_compare(
+            expected_code,
+            code,
+        ):
+
+            await interaction.edit_original_response(
+                content=None,
+                embed=make_embed(
+                    f"{EMOJI['denied']} Incorrect Code",
+                    (
+                        "The verification code you entered "
+                        "doesn't match the code sent by Lunar.\n\n"
+                        "Check your Lunar notifications and try again."
+                    ),
+                    color=discord.Color.red(),
+                ),
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # Verify
+        # ----------------------------------------------------
+
+        await self.loading(
+            interaction,
+            "Finalizing Account",
+            (
+                f"{EMOJI['approved']} "
+                "Verification code matched.\n"
+                f"{EMOJI['loading']} "
+                "Finalizing your Lunar account link..."
+            ),
         )
 
         try:
-            await self.mark_verified(
-                interaction.user.id
+
+            verified = (
+                await db.account_links.set_verified(
+                    interaction.user.id,
+                    True,
+                )
+            )
+
+            if not verified:
+
+                raise RuntimeError(
+                    "Account link disappeared while verifying."
+                )
+
+            username = (
+                await db.account_links.get_username(
+                    interaction.user.id
+                )
             )
 
         except Exception:
-            logger.exception(
-                "Failed to mark account as verified."
+
+            log.exception(
+                "Failed to verify Lunar account."
             )
 
             await interaction.edit_original_response(
@@ -961,58 +1233,41 @@ class LinkAccount(commands.Cog):
                     f"{EMOJI['error']} Verification Error",
                     (
                         "The verification code was correct, "
-                        "but I couldn't finalize the account link."
+                        "but I couldn't finalize your account link."
                     ),
+                    color=discord.Color.red(),
                 ),
             )
+
             return
 
-        lunar_username = "Unknown"
-
-        if account_link.metadata:
-            lunar_username = account_link.metadata.get(
-                "lunar_username",
-                "Unknown",
-            )
-
-        # ───────────────────────────────────────
-        # Verified — Offer role sync
-        # ───────────────────────────────────────
+        # ----------------------------------------------------
+        # Success
+        # ----------------------------------------------------
 
         embed = make_embed(
             f"{EMOJI['approved']} Account Verified",
             (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['lunar']} **LUNAR ACCOUNT**\n"
-                f"> 👤 **Username:** `{lunar_username}`\n\n"
-                f"{EMOJI['approved']} **VERIFICATION COMPLETE**\n"
-                "> Your Lunar Anime account is now securely "
-                "linked to your Discord account.\n\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                "✨ **One Last Step**\n\n"
-                "Would you like me to synchronize your "
-                "Lunar Anime roles with your Discord roles?\n\n"
-                "This will add missing roles and remove roles "
-                "that you no longer have on Lunar.\n\n"
-                "Choose an option below:"
+                f"{EMOJI['lunar']} **Lunar Account**\n"
+                f"> `{username or 'Unknown'}`\n\n"
+                f"{EMOJI['verify']} **Verification Complete**\n"
+                "> Your Lunar Anime account is now linked "
+                "and verified with Discord.\n\n"
+                "Would you like to synchronize your "
+                "Lunar roles with Discord?"
             ),
+            color=discord.Color.green(),
         )
 
         embed.add_field(
-            name="🌙 Lunar",
-            value=f"`{lunar_username}`",
+            name="Lunar",
+            value=f"`{username or 'Unknown'}`",
             inline=True,
         )
 
         embed.add_field(
-            name="🔗 Discord",
-            value=interaction.user.mention,
-            inline=True,
-        )
-
-        embed.add_field(
-            name="✅ Status",
-            value="Verified",
+            name="Status",
+            value=f"{EMOJI['approved']} Verified",
             inline=True,
         )
 
@@ -1023,239 +1278,299 @@ class LinkAccount(commands.Cog):
         await interaction.edit_original_response(
             content=None,
             embed=embed,
-            view=RoleSyncView(self),
+            view=RoleSyncView(
+                self
+            ),
         )
 
-        logger.info(
-            "Lunar account verified: Discord=%s Lunar=%s UUID=%s",
+        log.info(
+            "Lunar account verified: Discord=%s Lunar=%s",
             interaction.user.id,
-            lunar_username,
-            account_link.lunar_uuid,
+            username,
         )
 
-    # ═══════════════════════════════════════════
-    # Role Synchronization
-    # ═══════════════════════════════════════════
+    # ========================================================
+    # ROLE SYNC
+    # ========================================================
 
     async def sync_roles(
         self,
         interaction: discord.Interaction,
     ) -> None:
-        """Synchronize Lunar roles with Discord roles."""
 
-        started = asyncio.get_running_loop().time()
+        now = asyncio.get_running_loop().time()
 
-        # ───────────────────────────────────────
-        # Starting
-        # ───────────────────────────────────────
+        last_sync = (
+            self.role_sync_cooldowns.get(
+                interaction.user.id
+            )
+        )
 
-        await self.loading(
-            interaction,
-            "Starting Role Sync",
-            (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['loading']} **Fetching Lunar Account**\n"
-                "⬜ Checking Lunar Roles\n"
-                "⬜ Checking Discord Roles\n"
-                "⬜ Applying Changes\n\n"
-                "━━━━━━━━━━━━━━━━━━━━"
-            ),
-            1.5,
+        if (
+            last_sync is not None
+            and now - last_sync < ROLE_SYNC_COOLDOWN
+        ):
+
+            remaining = int(
+                ROLE_SYNC_COOLDOWN
+                - (
+                    now - last_sync
+                )
+            )
+
+            await interaction.response.send_message(
+                (
+                    f"{EMOJI['loading']} "
+                    f"Role sync is on cooldown. "
+                    f"Try again in `{remaining}s`."
+                ),
+                ephemeral=True,
+            )
+
+            return
+
+        self.role_sync_cooldowns[
+            interaction.user.id
+        ] = now
+
+        await interaction.response.defer(
+            ephemeral=True
         )
 
         try:
+
+            # ------------------------------------------------
+            # Database
+            # ------------------------------------------------
+
+            await self.loading(
+                interaction,
+                "Loading Linked Account",
+                (
+                    f"{EMOJI['loading']} "
+                    "Checking your verified Lunar account..."
+                ),
+            )
+
+            account = await self.get_link(
+                interaction.user.id
+            )
+
+            if not account or not account.verified:
+
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=make_embed(
+                        f"{EMOJI['denied']} Account Not Verified",
+                        (
+                            "You need a verified Lunar account "
+                            "before roles can be synchronized."
+                        ),
+                        color=discord.Color.red(),
+                    ),
+                    view=None,
+                )
+
+                return
+
+            username = (
+                await db.account_links.get_username(
+                    interaction.user.id
+                )
+            )
+
+            if not username:
+
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=make_embed(
+                        f"{EMOJI['error']} Username Missing",
+                        (
+                            "Your account is verified, but the "
+                            "Lunar username could not be retrieved."
+                        ),
+                        color=discord.Color.red(),
+                    ),
+                    view=None,
+                )
+
+                return
+
+            # ------------------------------------------------
+            # Lunar profile
+            # ------------------------------------------------
+
+            await self.loading(
+                interaction,
+                "Fetching Lunar Roles",
+                (
+                    f"{EMOJI['approved']} "
+                    f"Verified as `{username}`.\n"
+                    f"{EMOJI['loading']} "
+                    "Fetching your latest Lunar roles..."
+                ),
+            )
+
+            profile = await self.fetch_profile(
+                username
+            )
+
+            if not profile:
+
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=make_embed(
+                        f"{EMOJI['error']} Lunar Unavailable",
+                        (
+                            "I couldn't retrieve your latest "
+                            "Lunar roles right now.\n\n"
+                            "Your account remains linked."
+                        ),
+                        color=discord.Color.red(),
+                    ),
+                    view=None,
+                )
+
+                return
+
+            lunar_roles = get_profile_roles(
+                profile
+            )
+
+            # ------------------------------------------------
+            # Discord member
+            # ------------------------------------------------
+
             guild = self.bot.get_guild(
                 LINK_GUILD_ID
             )
 
             if guild is None:
-                guild = await self.bot.fetch_guild(
-                    LINK_GUILD_ID
+
+                await interaction.edit_original_response(
+                    content=None,
+                    embed=make_embed(
+                        f"{EMOJI['error']} Guild Unavailable",
+                        (
+                            "I couldn't access the Lunar Discord server."
+                        ),
+                        color=discord.Color.red(),
+                    ),
+                    view=None,
                 )
+
+                return
 
             member = guild.get_member(
                 interaction.user.id
             )
 
             if member is None:
-                member = await guild.fetch_member(
-                    interaction.user.id
-                )
 
-            # ───────────────────────────────────
-            # Database
-            # ───────────────────────────────────
+                try:
 
-            await self.loading(
-                interaction,
-                "Loading Linked Account",
-                (
-                    "━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"{EMOJI['approved']} **Guild Connected**\n"
-                    f"{EMOJI['loading']} **Loading Account Link**\n"
-                    "⬜ Checking Lunar Roles\n"
-                    "⬜ Applying Changes\n\n"
-                    "━━━━━━━━━━━━━━━━━━━━"
-                ),
-                1.25,
-            )
-
-            link = await self.get_link(
-                interaction.user.id
-            )
-
-            if link is None or not link.verified:
-                await interaction.edit_original_response(
-                    content=None,
-                    embed=make_embed(
-                        f"{EMOJI['error']} Account Not Linked",
-                        (
-                            "I couldn't find a verified Lunar Anime "
-                            "account for your Discord account."
-                        ),
-                    ),
-                    view=None,
-                )
-                return
-
-            # ───────────────────────────────────
-            # Lunar API
-            # ───────────────────────────────────
-
-            await self.loading(
-                interaction,
-                "Fetching Lunar Roles",
-                (
-                    "━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"{EMOJI['approved']} **Account Found**\n"
-                    f"{EMOJI['loading']} **Fetching Lunar Roles**\n"
-                    "⬜ Checking Discord Roles\n"
-                    "⬜ Applying Changes\n\n"
-                    "━━━━━━━━━━━━━━━━━━━━"
-                ),
-                1.5,
-            )
-
-            if self.session is None:
-                raise RuntimeError(
-                    "HTTP session is not initialized."
-                )
-
-            async with self.session.get(
-                f"{LUNAR_API_BASE}/api/animes/profile",
-                params={
-                    "user_id": str(link.lunar_uuid),
-                },
-                headers={
-                    "X-Scraper-Guard-Bypass": BYPASS_TOKEN,
-                    "Authorization": LUNAR_TOKEN,
-                },
-            ) as response:
-
-                if response.status != 200:
-                    raise RuntimeError(
-                        f"Lunar API returned HTTP {response.status}."
+                    member = await guild.fetch_member(
+                        interaction.user.id
                     )
 
-                account = await response.json()
+                except discord.NotFound:
 
-            lunar_data = account["data"]["data"]
+                    await interaction.edit_original_response(
+                        content=None,
+                        embed=make_embed(
+                            f"{EMOJI['error']} Member Not Found",
+                            (
+                                "I couldn't find your Discord "
+                                "member profile in the Lunar server."
+                            ),
+                            color=discord.Color.red(),
+                        ),
+                        view=None,
+                    )
 
-            lunar_username = lunar_data.get(
-                "username",
-                "Unknown",
-            )
+                    return
 
-            lunar_roles = (
-                lunar_data
-                .get("role", "")
-                .split("|")
-            )
-
-            lunar_roles = {
-                role.strip().lower()
-                for role in lunar_roles
-                if role.strip()
-            }
-
-            # ───────────────────────────────────
-            # Discord role check
-            # ───────────────────────────────────
+            # ------------------------------------------------
+            # Apply roles
+            # ------------------------------------------------
 
             await self.loading(
                 interaction,
-                "Checking Discord Roles",
+                "Synchronizing Roles",
                 (
-                    "━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"{EMOJI['approved']} **Lunar Account Found**\n"
-                    f"{EMOJI['approved']} **Lunar Roles Retrieved**\n"
-                    f"{EMOJI['loading']} **Checking Discord Roles**\n"
-                    "⬜ Applying Changes\n\n"
-                    "━━━━━━━━━━━━━━━━━━━━"
+                    f"{EMOJI['approved']} "
+                    "Lunar roles retrieved.\n"
+                    f"{EMOJI['loading']} "
+                    "Comparing Discord roles..."
                 ),
-                1.5,
             )
 
             added: list[str] = []
-            owned: list[str] = []
             removed: list[str] = []
+            unchanged: list[str] = []
 
-            # ───────────────────────────────────
-            # Apply role changes
-            # ───────────────────────────────────
+            configured_role_ids = {
+                role_data["id"]
+                for role_data in (
+                    LUNAR_ROLE_MAP.values()
+                )
+            }
 
-            await self.loading(
-                interaction,
-                "Applying Roles",
-                (
-                    "━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"{EMOJI['approved']} **Lunar Account Found**\n"
-                    f"{EMOJI['approved']} **Lunar Roles Retrieved**\n"
-                    f"{EMOJI['approved']} **Discord Roles Checked**\n"
-                    f"{EMOJI['loading']} **Applying Changes**\n\n"
-                    "━━━━━━━━━━━━━━━━━━━━"
-                ),
-                1.5,
-            )
-
-            for role_name, role_data in LUNAR_ROLE_MAP.items():
+            # Add / keep mapped roles.
+            for role_name, role_data in (
+                LUNAR_ROLE_MAP.items()
+            ):
 
                 role = guild.get_role(
                     role_data["id"]
                 )
 
                 if role is None:
-                    logger.warning(
-                        "Configured role does not exist: %s (%s)",
-                        role_name,
-                        role_data["id"],
-                    )
                     continue
 
-                has_role = role in member.roles
-                should_have = role_name in lunar_roles
+                should_have = (
+                    role_name
+                    in lunar_roles
+                )
 
-                if should_have and not has_role:
-                    await member.add_roles(
-                        role,
-                        reason="Lunar Anime role synchronization",
-                    )
+                has_role = (
+                    role
+                    in member.roles
+                )
 
-                    added.append(
-                        f"{role_data['emoji']} "
-                        f"{role_data['name']}"
-                    )
+                if should_have:
 
-                elif should_have and has_role:
-                    owned.append(
-                        f"{role_data['emoji']} "
-                        f"{role_data['name']}"
-                    )
+                    if not has_role:
 
-                elif not should_have and has_role:
+                        await member.add_roles(
+                            role,
+                            reason=(
+                                "Lunar role synchronization"
+                            ),
+                        )
+
+                        added.append(
+                            f"{role_data['emoji']} "
+                            f"{role_data['name']}"
+                        )
+
+                    else:
+
+                        unchanged.append(
+                            f"{role_data['emoji']} "
+                            f"{role_data['name']}"
+                        )
+
+                elif (
+                    has_role
+                    and role.id != VERIFIED_ROLE_ID
+                ):
+
                     await member.remove_roles(
                         role,
-                        reason="Lunar Anime role synchronization",
+                        reason=(
+                            "Lunar role synchronization"
+                        ),
                     )
 
                     removed.append(
@@ -1263,84 +1578,77 @@ class LinkAccount(commands.Cog):
                         f"{role_data['name']}"
                     )
 
-            # ───────────────────────────────────
-            # Unmapped Lunar roles
-            # ───────────────────────────────────
-
-            unmapped = [
-                role
-                for role in lunar_roles
-                if role not in LUNAR_ROLE_MAP
-            ]
-
-            elapsed = (
-                asyncio.get_running_loop().time()
-                - started
-            )
-
-            # ───────────────────────────────────
-            # Build result
-            # ───────────────────────────────────
+            # ------------------------------------------------
+            # Result
+            # ------------------------------------------------
 
             added_text = (
-                "\n".join(added)
+                "\n".join(
+                    f"> {value}"
+                    for value in added
+                )
                 if added
                 else "> None"
             )
 
-            owned_text = (
-                "\n".join(owned)
-                if owned
-                else "> None"
-            )
-
             removed_text = (
-                "\n".join(removed)
+                "\n".join(
+                    f"> {value}"
+                    for value in removed
+                )
                 if removed
                 else "> None"
             )
 
-            description = (
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{EMOJI['lunar']} **LUNAR ACCOUNT**\n"
-                f"> 👤 **User:** `{lunar_username}`\n"
-                f"> 🆔 **UUID:** `{link.lunar_uuid}`\n\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"➕ **Added**\n"
-                f"{added_text}\n\n"
-                f"✔️ **Already Owned**\n"
-                f"{owned_text}\n\n"
-                f"➖ **Removed**\n"
-                f"{removed_text}\n"
-            )
-
-            if unmapped:
-                description += (
-                    "\n⚠️ **Unmapped Lunar Roles**\n"
-                    + "\n".join(
-                        f"> `{role}`"
-                        for role in unmapped
-                    )
-                    + "\n"
+            unchanged_text = (
+                "\n".join(
+                    f"> {value}"
+                    for value in unchanged
                 )
-
-            description += (
-                "\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"✨ **Updated:** "
-                f"`{len(added) + len(removed)}`\n"
-                f"⏱️ **Time:** `{elapsed:.2f}s`"
+                if unchanged
+                else "> None"
             )
 
             embed = make_embed(
-                f"{EMOJI['lunar']} Role Sync Complete",
-                description,
+                f"{EMOJI['approved']} Role Sync Complete",
+                (
+                    f"{EMOJI['lunar']} **Lunar Account**\n"
+                    f"> `{username}`\n\n"
+                    "➕ **Added**\n"
+                    f"{added_text}\n\n"
+                    "➖ **Removed**\n"
+                    f"{removed_text}\n\n"
+                    "✅ **Already Correct**\n"
+                    f"{unchanged_text}"
+                ),
+                color=discord.Color.green(),
+            )
+
+            embed.add_field(
+                name="Changes",
+                value=(
+                    f"`{len(added)}` added\n"
+                    f"`{len(removed)}` removed"
+                ),
+                inline=True,
+            )
+
+            embed.add_field(
+                name="Lunar Roles",
+                value=(
+                    ", ".join(
+                        sorted(
+                            lunar_roles
+                        )
+                    )
+                    or "None"
+                ),
+                inline=True,
             )
 
             embed.set_thumbnail(
                 url=interaction.user.display_avatar.url
             )
-
-            embed.timestamp = discord.utils.utcnow()
 
             await interaction.edit_original_response(
                 content=None,
@@ -1348,20 +1656,21 @@ class LinkAccount(commands.Cog):
                 view=None,
             )
 
-            logger.info(
+            log.info(
                 (
-                    "Role sync completed: "
+                    "Role sync complete: "
                     "Discord=%s Lunar=%s Added=%s Removed=%s"
                 ),
                 interaction.user.id,
-                lunar_username,
+                username,
                 len(added),
                 len(removed),
             )
 
         except discord.Forbidden:
-            logger.exception(
-                "Discord denied a role synchronization action."
+
+            log.exception(
+                "Discord permissions prevented role sync."
             )
 
             await interaction.edit_original_response(
@@ -1369,10 +1678,11 @@ class LinkAccount(commands.Cog):
                 embed=make_embed(
                     f"{EMOJI['error']} Permission Error",
                     (
-                        "I couldn't modify one or more Discord roles.\n\n"
-                        "Please make sure the bot's role is positioned "
-                        "above the roles it needs to manage."
+                        "Discord denied a role change.\n\n"
+                        "Make sure the bot's highest role is "
+                        "above the Lunar roles it needs to manage."
                     ),
+                    color=discord.Color.red(),
                 ),
                 view=None,
             )
@@ -1381,8 +1691,9 @@ class LinkAccount(commands.Cog):
             aiohttp.ClientError,
             asyncio.TimeoutError,
         ):
-            logger.exception(
-                "Lunar API error during role synchronization."
+
+            log.exception(
+                "Lunar API error during role sync."
             )
 
             await interaction.edit_original_response(
@@ -1390,16 +1701,19 @@ class LinkAccount(commands.Cog):
                 embed=make_embed(
                     f"{EMOJI['error']} Lunar API Error",
                     (
-                        "I couldn't retrieve your latest Lunar roles.\n\n"
-                        "Your account is still linked successfully."
+                        "Lunar couldn't be reached while "
+                        "synchronizing your roles.\n\n"
+                        "Your account remains linked."
                     ),
+                    color=discord.Color.red(),
                 ),
                 view=None,
             )
 
         except Exception:
-            logger.exception(
-                "Unexpected role synchronization error."
+
+            log.exception(
+                "Unexpected Lunar role synchronization error."
             )
 
             await interaction.edit_original_response(
@@ -1407,19 +1721,41 @@ class LinkAccount(commands.Cog):
                 embed=make_embed(
                     f"{EMOJI['error']} Role Sync Failed",
                     (
-                        "Something went wrong while synchronizing "
-                        "your Lunar roles.\n\n"
-                        f"{EMOJI['approved']} Your account is still "
-                        "linked successfully."
+                        "Something unexpected happened while "
+                        "synchronizing your roles.\n\n"
+                        "Your Lunar account remains linked."
                     ),
+                    color=discord.Color.red(),
                 ),
                 view=None,
             )
 
 
-# ═══════════════════════════════════════════════
-# Cog Setup
-# ═══════════════════════════════════════════════
+# ============================================================
+# CONSTANT-TIME STRING COMPARISON
+# ============================================================
 
-async def setup(bot: commands.Bot):
-    await bot.add_cog(LinkAccount(bot))
+def secrets_compare(
+    expected: str,
+    supplied: str,
+) -> bool:
+
+    import secrets
+
+    return secrets.compare_digest(
+        expected,
+        supplied,
+    )
+
+
+# ============================================================
+# SETUP
+# ============================================================
+
+async def setup(
+    bot: commands.Bot,
+):
+
+    await bot.add_cog(
+        LinkAccount(bot)
+    )

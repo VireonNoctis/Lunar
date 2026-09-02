@@ -131,7 +131,20 @@ SCYLLA_CONFIG = ScyllaConfig(
 # ============================================================
 
 CORE_SCHEMA: tuple[str, ...] = (
+    # --------------------------------------------------------
+    # BOT VARIABLES
+    # --------------------------------------------------------
 
+    """
+    CREATE TABLE IF NOT EXISTS variables (
+        identifier text PRIMARY KEY,
+
+        int_value bigint,
+        string_value text,
+
+        metadata map<text, text>
+    )
+    """,
     # ========================================================
     # USERS
     # ========================================================
@@ -2605,7 +2618,104 @@ class MentionRepository(BaseRepository):
                     row.id,
                 ),
             )
+)
 
+class VariableRepository(BaseRepository):
+    async def get(self, identifier: str):
+        result = await self.db.execute(
+            """
+            SELECT identifier, int_value, string_value, metadata
+            FROM variables
+            WHERE identifier = ?
+            """.replace("?", "%s"),
+            (identifier,),
+        )
+
+        return result.one()
+
+    async def set(
+        self,
+        identifier: str,
+        *,
+        int_value: int | None = None,
+        string_value: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        await self.db.execute(
+            """
+            INSERT INTO variables (
+                identifier,
+                int_value,
+                string_value,
+                metadata
+            )
+            VALUES (?, ?, ?, ?)
+            """.replace("?", "%s"),
+            (
+                identifier,
+                int_value,
+                string_value,
+                metadata or {},
+            ),
+        )
+
+    async def update(
+        self,
+        identifier: str,
+        *,
+        int_value: int | None = None,
+        string_value: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        await self.db.execute(
+            """
+            UPDATE variables
+            SET int_value = ?,
+                string_value = ?,
+                metadata = ?
+            WHERE identifier = ?
+            """.replace("?", "%s"),
+            (
+                int_value,
+                string_value,
+                metadata or {},
+                identifier,
+            ),
+        )
+
+    async def ensure(
+        self,
+        identifier: str,
+        *,
+        int_value: int | None = None,
+        string_value: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        existing = await self.get(identifier)
+
+        if existing is not None:
+            return
+
+        await self.set(
+            identifier,
+            int_value=int_value,
+            string_value=string_value,
+            metadata=metadata,
+        )
+
+    async def get_int(
+        self,
+        identifier: str,
+        default: int = 0,
+    ) -> int:
+        row = await self.get(identifier)
+
+        if row is None or row.int_value is None:
+            return default
+
+        return int(row.int_value)
+
+# ============================================================
 # ============================================================
 # CSV MIGRATION
 # ============================================================

@@ -145,6 +145,23 @@ CORE_SCHEMA: tuple[str, ...] = (
         metadata map<text, text>
     )
     """,
+
+
+    # ========================================================
+    # COMMAND STATS
+    # ========================================================
+
+"""
+CREATE TABLE IF NOT EXISTS command_stats (
+    command_name text PRIMARY KEY,
+
+    uses bigint,
+
+    last_used_at timestamp
+)
+""",
+
+
     # ========================================================
     # USERS
     # ========================================================
@@ -914,7 +931,7 @@ class ScyllaDatabase:
     self.xp_events = XPEventRepository(self)
     self.variables = VariableRepository(self)
         self.users = UserRepository(self)
-
+        self.command_stats = CommandStatsRepository(self)
         self.account_links = (
             AccountLinkRepository(self)
         )
@@ -1680,6 +1697,63 @@ class AccountLinkRepository(BaseRepository):
                 ),
             )
 
+
+# ============================================================
+# COMMAND STATS
+# ============================================================
+
+class CommandStatsRepository(BaseRepository):
+
+    async def increment(
+        self,
+        command_name: str,
+    ):
+
+        await self.query(
+            """
+            UPDATE command_stats
+            SET
+                uses = coalesce(uses, 0) + 1,
+                last_used_at = ?
+            WHERE command_name = ?
+            """,
+            (
+                utcnow(),
+                command_name,
+            ),
+        )
+
+    async def get(
+        self,
+        command_name: str,
+    ):
+
+        return await self.one(
+            """
+            SELECT *
+            FROM command_stats
+            WHERE command_name = ?
+            """,
+            (
+                command_name,
+            ),
+        )
+
+    async def total(
+        self,
+    ):
+
+        result = await self.query(
+            """
+            SELECT uses
+            FROM command_stats
+            """
+        )
+
+        return sum(
+            int(row.uses or 0)
+            for row in result.all()
+        )
 
 # ============================================================
 # XP EVENTS

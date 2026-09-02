@@ -1,6 +1,3 @@
-import asyncio
-import json
-import os
 import re
 from datetime import datetime
 from typing import Optional
@@ -9,6 +6,7 @@ import aiohttp
 import discord
 from discord.ext import commands, tasks
 
+from ..utilities.database import db
 from ..utilities.emoji import EMOJI
 
 
@@ -16,105 +14,85 @@ from ..utilities.emoji import EMOJI
 # CONFIG
 # ============================================================
 
-GITHUB_REPO = "https://https://github.com/VireonNoctis/Lunar/"
+# The ONE GitHub repository to monitor.
+GITHUB_REPO = "https://github.com/OWNER/REPOSITORY"
 
-# Put the Discord channel ID here
-CHANNEL_ID = 1489719944135442607
+# Discord channel where commit embeds are sent.
+CHANNEL_ID = 123456789012345678
 
-# How often GitHub is checked
-CHECK_INTERVAL = 30
+# GitHub polling interval in seconds.
+CHECK_INTERVAL = 60
 
-# Maximum amount of changed files displayed in the embed
+# Maximum changed files shown inside the embed.
 MAX_FILE_PREVIEW = 6
-
-# Persistent commit tracking
-DATA_FILE = "github_commit.json"
 
 
 class GitHubCommits(commands.Cog):
+    """
+    GitHub commit monitoring integration.
+
+    Monitors one repository and sends a Discord embed whenever
+    a new commit is detected.
+
+    Commit state and commit history are stored in ScyllaDB.
+    """
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.session: Optional[aiohttp.ClientSession] = None
-        self.last_commit = self.load_last_commit()
+
+        self.repository_key = self._get_repository_key()
 
         self.check_commits.start()
+
+    # ========================================================
+    # CLEANUP
+    # ========================================================
 
     def cog_unload(self):
         self.check_commits.cancel()
 
-        if self.session and not self.session.closed:
-            self.bot.loop.create_task(self.session.close())
-
-    # ========================================================
-    # DATA
-    # ========================================================
-
-    def load_last_commit(self) -> Optional[str]:
-        if not os.path.exists(DATA_FILE):
-            return None
-
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as file:
-                data = json.load(file)
-
-            return data.get("last_commit")
-
-        except (OSError, json.JSONDecodeError):
-            return None
-
-    def save_last_commit(self, commit_sha: str):
-        try:
-            with open(DATA_FILE, "w", encoding="utf-8") as file:
-                json.dump(
-                    {
-                        "last_commit": commit_sha
-                    },
-                    file,
-                    indent=4
-                )
-
-        except OSError as error:
-            print(f"[GitHub] Failed to save commit data: {error}")
+        if (
+            self.session is not None
+            and not self.session.closed
+        ):
+            self.bot.loop.create_task(
+                self.session.close()
+            )
 
     # ========================================================
     # REPOSITORY
     # ========================================================
 
-    def get_repo(self):
+    def _get_repository_key(self) -> str:
         """
-        Converts:
+        Returns:
 
-        https://github.com/Owner/Repository
-        github.com/Owner/Repository
-        Owner/Repository
-
-        into:
-
-        owner, repository
+            OWNER/REPOSITORY
         """
 
-        repo_url = GITHUB_REPO.strip().rstrip("/")
+        repo = GITHUB_REPO.strip().rstrip("/")
 
-        repo_url = re.sub(
+        repo = re.sub(
             r"^https?://",
             "",
-            repo_url,
-            flags=re.IGNORECASE
+            repo,
+            flags=re.IGNORECASE,
         )
 
-        repo_url = re.sub(
+        repo = re.sub(
             r"^www\.",
             "",
-            repo_url,
-            flags=re.IGNORECASE
+            repo,
+            flags=re.IGNORECASE,
         )
 
-        if repo_url.startswith("github.com/"):
-            repo_url = repo_url[len("github.com/"):]
+        if repo.startswith("github.com/"):
+            repo = repo[len("github.com/"):]
 
-        repo_url = repo_url.removesuffix(".git")
+        repo = repo.removesuffix(".git")
 
-        parts = repo_url.split("/")
+        parts = repo.split("/")
 
         if len(parts) < 2:
             raise ValueError(
@@ -122,30 +100,39 @@ class GitHubCommits(commands.Cog):
                 "'https://github.com/OWNER/REPOSITORY'."
             )
 
-        owner = parts[0]
-        repository = parts[1]
+        return f"{parts[0]}/{parts[1]}"
+
+    def _get_owner_repo(self):
+        owner, repository = (
+            self.repository_key.split("/", 1)
+        )
 
         return owner, repository
 
     # ========================================================
-    # HTTP SESSION
+    # HTTP
     # ========================================================
 
     async def get_session(self):
-        if self.session is None or self.session.closed:
+        if (
+            self.session is None
+            or self.session.closed
+        ):
             self.session = aiohttp.ClientSession(
                 headers={
-                    "Accept": "application/vnd.github+json",
-                    "User-Agent": "Lunar-GitHub-Commit-Monitor",
-                    "X-GitHub-Api-Version": "2022-11-28"
+                    "Accept": (
+                        "application/vnd.github+json"
+                    ),
+                    "User-Agent": (
+                        "Lunar-GitHub-Commit-Monitor"
+                    ),
+                    "X-GitHub-Api-Version": (
+                        "2022-11-28"
+                    ),
                 }
             )
 
         return self.session
-
-    # ========================================================
-    # GITHUB API
-    # ========================================================
 
     async def github_get(self, url: str):
         session = await self.get_session()
@@ -154,19 +141,21 @@ class GitHubCommits(commands.Cog):
             async with session.get(url) as response:
 
                 if response.status == 404:
-                    print(f"[GitHub] Resource not found: {url}")
+                    print(
+                        f"[GitHub] Not found: {url}"
+                    )
                     return None
 
                 if response.status == 403:
                     print(
-                        "[GitHub] API rate limit reached or request "
-                        "was forbidden."
+                        "[GitHub] Request rejected or "
+                        "rate limited."
                     )
                     return None
 
                 if response.status != 200:
                     print(
-                        f"[GitHub] API returned HTTP "
+                        f"[GitHub] HTTP "
                         f"{response.status}: {url}"
                     )
                     return None
@@ -174,36 +163,20 @@ class GitHubCommits(commands.Cog):
                 return await response.json()
 
         except aiohttp.ClientError as error:
-            print(f"[GitHub] Request failed: {error}")
+            print(
+                f"[GitHub] Request failed: {error}"
+            )
+
             return None
 
-    async def get_latest_commit(self):
-        owner, repository = self.get_repo()
-
-        url = (
-            f"https://api.github.com/repos/"
-            f"{owner}/{repository}/commits?per_page=1"
-        )
-
-        commits = await self.github_get(url)
-
-        if not commits:
-            return None
-
-        return commits[0]
-
-    async def get_commit_details(self, sha: str):
-        owner, repository = self.get_repo()
-
-        url = (
-            f"https://api.github.com/repos/"
-            f"{owner}/{repository}/commits/{sha}"
-        )
-
-        return await self.github_get(url)
+    # ========================================================
+    # GITHUB API
+    # ========================================================
 
     async def get_repository_info(self):
-        owner, repository = self.get_repo()
+        owner, repository = (
+            self._get_owner_repo()
+        )
 
         url = (
             f"https://api.github.com/repos/"
@@ -212,23 +185,120 @@ class GitHubCommits(commands.Cog):
 
         return await self.github_get(url)
 
+    async def get_latest_commit(self):
+        owner, repository = (
+            self._get_owner_repo()
+        )
+
+        url = (
+            f"https://api.github.com/repos/"
+            f"{owner}/{repository}"
+            f"/commits?per_page=1"
+        )
+
+        commits = await self.github_get(
+            url
+        )
+
+        if not commits:
+            return None
+
+        return commits[0]
+
+    async def get_commit_details(
+        self,
+        sha: str,
+    ):
+        owner, repository = (
+            self._get_owner_repo()
+        )
+
+        url = (
+            f"https://api.github.com/repos/"
+            f"{owner}/{repository}"
+            f"/commits/{sha}"
+        )
+
+        return await self.github_get(
+            url
+        )
+
+    # ========================================================
+    # REPOSITORY REGISTRATION
+    # ========================================================
+
+    async def ensure_repository(self):
+        """
+        Ensures the monitored repository exists
+        in ScyllaDB.
+        """
+
+        repository = await db.github.get(
+            self.repository_key
+        )
+
+        if repository:
+            return repository
+
+        repository_info = (
+            await self.get_repository_info()
+        )
+
+        if not repository_info:
+            return None
+
+        await db.github.register_repository(
+            self.repository_key,
+            url=GITHUB_REPO,
+            owner=repository_info.get(
+                "owner",
+                {},
+            ).get(
+                "login",
+                self._get_owner_repo()[0],
+            ),
+            name=repository_info.get(
+                "name",
+                self._get_owner_repo()[1],
+            ),
+            branch=repository_info.get(
+                "default_branch",
+                "main",
+            ),
+            channel_id=CHANNEL_ID,
+            enabled=True,
+        )
+
+        return await db.github.get(
+            self.repository_key
+        )
+
     # ========================================================
     # FORMATTERS
     # ========================================================
 
     @staticmethod
-    def truncate(text: str, length: int) -> str:
+    def truncate(
+        text: str,
+        length: int,
+    ) -> str:
+
         if len(text) <= length:
             return text
 
-        return text[:length - 3] + "..."
+        return text[: length - 3] + "..."
 
     @staticmethod
-    def parse_commit_message(message: str):
+    def get_message_parts(
+        message: str,
+    ):
         lines = message.splitlines()
 
         if not lines:
-            return "No commit message.", ""
+            return (
+                "No commit message.",
+                "",
+            )
 
         title = lines[0].strip()
 
@@ -240,81 +310,142 @@ class GitHubCommits(commands.Cog):
         return title, body
 
     @staticmethod
-    def format_change_count(additions: int, deletions: int) -> str:
+    def get_author(
+        commit: dict,
+    ) -> str:
+
+        github_author = (
+            commit.get("author")
+            or {}
+        )
+
+        git_author = (
+            commit.get("commit", {})
+            .get("author")
+            or {}
+        )
+
         return (
-            f"`+{additions}` additions • "
-            f"`-{deletions}` deletions"
+            github_author.get("login")
+            or github_author.get("name")
+            or git_author.get("name")
+            or "Unknown"
         )
 
-    def get_commit_author(self, commit):
-        github_author = commit.get("author")
-        git_author = commit["commit"].get("author") or {}
+    @staticmethod
+    def get_committer(
+        commit: dict,
+    ) -> str:
 
-        if github_author:
-            return (
-                github_author.get("login")
-                or github_author.get("name")
-                or git_author.get("name")
-                or "Unknown"
-            )
-
-        return git_author.get("name") or "Unknown"
-
-    def get_commit_avatar(self, commit):
-        author = commit.get("author")
-
-        if author:
-            return author.get("avatar_url")
-
-        return None
-
-    def get_committer(self, commit):
-        github_committer = commit.get("committer")
-        git_committer = commit["commit"].get("committer") or {}
-
-        if github_committer:
-            return (
-                github_committer.get("login")
-                or github_committer.get("name")
-                or git_committer.get("name")
-                or "Unknown"
-            )
-
-        return git_committer.get("name") or "Unknown"
-
-    def get_verification(self, commit) -> bool:
-        verification = commit["commit"].get("verification")
-
-        if not verification:
-            return False
-
-        return bool(
-            verification.get("verified", False)
+        github_committer = (
+            commit.get("committer")
+            or {}
         )
 
+        git_committer = (
+            commit.get("commit", {})
+            .get("committer")
+            or {}
+        )
+
+        return (
+            github_committer.get("login")
+            or github_committer.get("name")
+            or git_committer.get("name")
+            or "Unknown"
+        )
+
+    @staticmethod
+    def get_avatar(
+        commit: dict,
+    ) -> Optional[str]:
+
+        author = commit.get(
+            "author"
+        )
+
+        if not author:
+            return None
+
+        return author.get(
+            "avatar_url"
+        )
+
+    @staticmethod
+    def get_timestamp(
+        commit: dict,
+    ) -> Optional[datetime]:
+
+        raw_date = (
+            commit.get("commit", {})
+            .get("author", {})
+            .get("date")
+        )
+
+        if not raw_date:
+            return None
+
+        try:
+            return datetime.fromisoformat(
+                raw_date.replace(
+                    "Z",
+                    "+00:00",
+                )
+            )
+
+        except ValueError:
+            return None
+
     # ========================================================
-    # CHANGED FILES
+    # FILES
     # ========================================================
 
-    def format_changed_files(self, files):
+    def format_files(
+        self,
+        files: list[dict],
+    ) -> str:
+
         if not files:
-            return "No file information available."
+            return (
+                "No changed-file information "
+                "available."
+            )
 
         output = []
 
-        for file in files[:MAX_FILE_PREVIEW]:
-            filename = file.get("filename", "Unknown file")
-            status = file.get("status", "modified")
+        for file in files[
+            :MAX_FILE_PREVIEW
+        ]:
 
-            additions = file.get("additions", 0)
-            deletions = file.get("deletions", 0)
+            filename = file.get(
+                "filename",
+                "Unknown",
+            )
+
+            status = file.get(
+                "status",
+                "modified",
+            )
+
+            additions = file.get(
+                "additions",
+                0,
+            )
+
+            deletions = file.get(
+                "deletions",
+                0,
+            )
 
             if status == "added":
                 icon = "🆕"
+
             elif status == "removed":
                 icon = "🗑️"
+
             elif status == "renamed":
                 icon = "↪️"
+
             else:
                 icon = "📝"
 
@@ -323,11 +454,15 @@ class GitHubCommits(commands.Cog):
                 f"`+{additions} -{deletions}`"
             )
 
-        remaining = len(files) - MAX_FILE_PREVIEW
+        remaining = (
+            len(files)
+            - MAX_FILE_PREVIEW
+        )
 
         if remaining > 0:
             output.append(
-                f"*...and {remaining} more file(s)*"
+                f"*...and {remaining} "
+                f"more file(s)*"
             )
 
         return "\n".join(output)
@@ -338,135 +473,185 @@ class GitHubCommits(commands.Cog):
 
     def create_embed(
         self,
-        commit,
-        repository_info=None,
-        previous_sha: Optional[str] = None
-    ):
-        commit_info = commit["commit"]
+        commit: dict,
+        repository_info: Optional[dict],
+        previous_sha: Optional[str],
+    ) -> discord.Embed:
 
-        sha = commit["sha"]
+        commit_info = commit.get(
+            "commit",
+            {},
+        )
+
+        sha = commit.get(
+            "sha",
+            "",
+        )
+
         short_sha = sha[:7]
 
         message = commit_info.get(
             "message",
-            "No commit message."
+            "No commit message.",
         )
 
-        title, body = self.parse_commit_message(
-            message
+        title, body = (
+            self.get_message_parts(
+                message
+            )
         )
 
-        author = self.get_commit_author(commit)
-        committer = self.get_committer(commit)
-
-        additions = commit.get("stats", {}).get(
-            "additions",
-            0
-        )
-
-        deletions = commit.get("stats", {}).get(
-            "deletions",
-            0
-        )
-
-        total_changes = commit.get("stats", {}).get(
-            "total",
-            additions + deletions
-        )
-
-        files = commit.get("files", [])
-        file_count = len(files)
-
-        verified = self.get_verification(
+        author = self.get_author(
             commit
         )
 
-        timestamp = None
+        committer = self.get_committer(
+            commit
+        )
 
-        raw_date = commit_info.get(
-            "author",
-            {}
-        ).get("date")
+        timestamp = self.get_timestamp(
+            commit
+        )
 
-        if raw_date:
-            try:
-                timestamp = datetime.fromisoformat(
-                    raw_date.replace(
-                        "Z",
-                        "+00:00"
-                    )
+        stats = commit.get(
+            "stats",
+            {},
+        )
+
+        additions = int(
+            stats.get(
+                "additions",
+                0,
+            )
+        )
+
+        deletions = int(
+            stats.get(
+                "deletions",
+                0,
+            )
+        )
+
+        total_changes = int(
+            stats.get(
+                "total",
+                additions + deletions,
+            )
+        )
+
+        files = commit.get(
+            "files",
+            [],
+        )
+
+        file_count = len(
+            files
+        )
+
+        verification = (
+            commit_info.get(
+                "verification"
+            )
+            or {}
+        )
+
+        verified = bool(
+            verification.get(
+                "verified",
+                False,
+            )
+        )
+
+        is_merge = (
+            len(
+                commit_info.get(
+                    "parents",
+                    [],
                 )
-            except ValueError:
-                timestamp = None
+            )
+            > 1
+        )
 
         # ----------------------------------------------------
-        # REPOSITORY
+        # REPOSITORY INFO
         # ----------------------------------------------------
 
-        if repository_info:
-            full_name = repository_info.get(
-                "full_name",
-                f"{self.get_repo()[0]}/{self.get_repo()[1]}"
+        owner, repository = (
+            self._get_owner_repo()
+        )
+
+        full_name = (
+            repository_info.get(
+                "full_name"
             )
+            if repository_info
+            else None
+        )
 
-            default_branch = repository_info.get(
-                "default_branch",
-                "unknown"
-            )
-
-            description = repository_info.get(
-                "description"
-            )
-
-            repo_icon = repository_info.get(
-                "html_url",
-                GITHUB_REPO
-            )
-
-        else:
-            owner, repository = self.get_repo()
-
+        if not full_name:
             full_name = (
                 f"{owner}/{repository}"
             )
 
-            default_branch = "unknown"
-            description = None
-            repo_icon = GITHUB_REPO
+        branch = (
+            repository_info.get(
+                "default_branch",
+                "main",
+            )
+            if repository_info
+            else "main"
+        )
 
-        # ----------------------------------------------------
-        # BRANCH
-        # ----------------------------------------------------
-        #
-        # The monitored endpoint returns the latest commit
-        # of the repository's default branch.
-        #
-        # Therefore the default branch is the monitored branch.
-        # ----------------------------------------------------
+        repo_description = (
+            repository_info.get(
+                "description"
+            )
+            if repository_info
+            else None
+        )
 
-        branch = default_branch
-
-        # ----------------------------------------------------
-        # COLORS
-        # ----------------------------------------------------
-
-        embed_color = (
-            discord.Color.green()
-            if verified
-            else discord.Color.dark_theme()
+        repo_url = (
+            repository_info.get(
+                "html_url"
+            )
+            if repository_info
+            else GITHUB_REPO
         )
 
         # ----------------------------------------------------
-        # TITLE
+        # COLOR
+        # ----------------------------------------------------
+
+        if is_merge:
+            embed_color = (
+                discord.Color.purple()
+            )
+
+        elif verified:
+            embed_color = (
+                discord.Color.green()
+            )
+
+        else:
+            embed_color = (
+                discord.Color.dark_theme()
+            )
+
+        # ----------------------------------------------------
+        # EMBED
         # ----------------------------------------------------
 
         embed = discord.Embed(
             title=(
-                f"{EMOJI['new1']} New GitHub Commit"
+                f"{EMOJI['new1']} "
+                "New GitHub Commit"
             ),
-            url=commit["html_url"],
+            url=commit.get(
+                "html_url",
+                GITHUB_REPO,
+            ),
             color=embed_color,
-            timestamp=timestamp
+            timestamp=timestamp,
         )
 
         # ----------------------------------------------------
@@ -479,16 +664,22 @@ class GitHubCommits(commands.Cog):
 
         if body:
             description_parts.append(
-                self.truncate(body, 700)
+                self.truncate(
+                    body,
+                    700,
+                )
             )
 
         description_parts.append(
             f"\n{EMOJI['right']} "
-            f"[View Commit]({commit['html_url']})"
+            f"[View Commit]"
+            f"({commit['html_url']})"
         )
 
-        embed.description = "\n".join(
-            description_parts
+        embed.description = (
+            "\n".join(
+                description_parts
+            )
         )
 
         # ----------------------------------------------------
@@ -496,19 +687,25 @@ class GitHubCommits(commands.Cog):
         # ----------------------------------------------------
 
         embed.add_field(
-            name=f"{EMOJI['dev']} Author",
+            name=(
+                f"{EMOJI['dev']} Author"
+            ),
             value=f"`{author}`",
-            inline=True
+            inline=True,
         )
+
+        # ----------------------------------------------------
+        # COMMITTER
+        # ----------------------------------------------------
 
         embed.add_field(
             name="👤 Committer",
             value=f"`{committer}`",
-            inline=True
+            inline=True,
         )
 
         # ----------------------------------------------------
-        # COMMIT
+        # SHA
         # ----------------------------------------------------
 
         embed.add_field(
@@ -517,7 +714,7 @@ class GitHubCommits(commands.Cog):
                 f"[`{short_sha}`]"
                 f"({commit['html_url']})"
             ),
-            inline=True
+            inline=True,
         )
 
         # ----------------------------------------------------
@@ -527,7 +724,7 @@ class GitHubCommits(commands.Cog):
         embed.add_field(
             name="🌿 Branch",
             value=f"`{branch}`",
-            inline=True
+            inline=True,
         )
 
         # ----------------------------------------------------
@@ -538,29 +735,31 @@ class GitHubCommits(commands.Cog):
             name="📁 Repository",
             value=(
                 f"[`{full_name}`]"
-                f"({repo_icon})"
+                f"({repo_url})"
             ),
-            inline=True
+            inline=True,
         )
 
         # ----------------------------------------------------
-        # VERIFICATION
+        # SIGNATURE
         # ----------------------------------------------------
 
-        verification_text = (
+        signature = (
             f"{EMOJI['verify']} **Verified**"
             if verified
-            else f"{EMOJI['denied']} **Not Verified**"
+            else
+            f"{EMOJI['denied']} "
+            "**Not Verified**"
         )
 
         embed.add_field(
             name="🔐 Signature",
-            value=verification_text,
-            inline=True
+            value=signature,
+            inline=True,
         )
 
         # ----------------------------------------------------
-        # STATISTICS
+        # CHANGES
         # ----------------------------------------------------
 
         embed.add_field(
@@ -571,16 +770,12 @@ class GitHubCommits(commands.Cog):
                 f"`+{additions}` additions • "
                 f"`-{deletions}` deletions"
             ),
-            inline=True
+            inline=True,
         )
 
         # ----------------------------------------------------
-        # MERGE STATUS
+        # COMMIT TYPE
         # ----------------------------------------------------
-
-        is_merge = len(
-            commit_info.get("parent", [])
-        ) > 1
 
         embed.add_field(
             name="🔀 Type",
@@ -589,19 +784,19 @@ class GitHubCommits(commands.Cog):
                 if is_merge
                 else "Commit"
             ),
-            inline=True
+            inline=True,
         )
 
         # ----------------------------------------------------
-        # FILE PREVIEW
+        # CHANGED FILES
         # ----------------------------------------------------
 
         embed.add_field(
             name="📂 Changed Files",
-            value=self.format_changed_files(
+            value=self.format_files(
                 files
             ),
-            inline=False
+            inline=False,
         )
 
         # ----------------------------------------------------
@@ -609,48 +804,50 @@ class GitHubCommits(commands.Cog):
         # ----------------------------------------------------
 
         if previous_sha:
-            owner, repository = self.get_repo()
 
             compare_url = (
                 f"https://github.com/"
-                f"{owner}/{repository}/compare/"
+                f"{owner}/{repository}"
+                f"/compare/"
                 f"{previous_sha}...{sha}"
             )
 
             embed.add_field(
                 name="⚡ Changes",
                 value=(
-                    f"[Compare with Previous Commit]("
-                    f"{compare_url})"
+                    f"[Compare with Previous Commit]"
+                    f"({compare_url})"
                 ),
-                inline=False
+                inline=False,
             )
 
         # ----------------------------------------------------
-        # DESCRIPTION FROM REPO
+        # REPOSITORY DESCRIPTION
         # ----------------------------------------------------
 
-        if description:
+        if repo_description:
+
             embed.add_field(
                 name="Repository Description",
                 value=self.truncate(
-                    description,
-                    300
+                    repo_description,
+                    300,
                 ),
-                inline=False
+                inline=False,
             )
 
         # ----------------------------------------------------
-        # AUTHOR AVATAR
+        # AVATAR
         # ----------------------------------------------------
 
-        avatar_url = self.get_commit_avatar(
+        avatar = self.get_avatar(
             commit
         )
 
-        if avatar_url:
+        if avatar:
+
             embed.set_thumbnail(
-                url=avatar_url
+                url=avatar
             )
 
         # ----------------------------------------------------
@@ -660,73 +857,99 @@ class GitHubCommits(commands.Cog):
         embed.set_footer(
             text=(
                 f"{full_name} • "
-                f"GitHub Commit Monitor"
+                "GitHub Commit Monitor"
             )
         )
 
         return embed
 
     # ========================================================
-    # COMMIT CHECKER
+    # INITIALIZATION
     # ========================================================
 
-    @tasks.loop(seconds=CHECK_INTERVAL)
-    async def check_commits(self):
+    async def initialize_repository(
+        self,
+    ):
 
-        commit = await self.get_latest_commit()
-
-        if commit is None:
-            return
-
-        current_sha = commit["sha"]
-
-        # ----------------------------------------------------
-        # FIRST RUN
-        # ----------------------------------------------------
-        #
-        # Establish the current commit without notifying.
-        # ----------------------------------------------------
-
-        if self.last_commit is None:
-            self.last_commit = current_sha
-            self.save_last_commit(current_sha)
-
-            print(
-                f"[GitHub] Initialized at "
-                f"{current_sha[:7]}"
-            )
-
-            return
-
-        # ----------------------------------------------------
-        # NO CHANGE
-        # ----------------------------------------------------
-
-        if current_sha == self.last_commit:
-            return
-
-        # ----------------------------------------------------
-        # GET CHANNEL
-        # ----------------------------------------------------
-
-        channel = self.bot.get_channel(
-            CHANNEL_ID
+        repository = (
+            await self.ensure_repository()
         )
 
-        if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(
-                    CHANNEL_ID
-                )
-            except discord.HTTPException as error:
-                print(
-                    f"[GitHub] Could not access "
-                    f"channel {CHANNEL_ID}: {error}"
-                )
-                return
+        if not repository:
+            return None
 
         # ----------------------------------------------------
-        # GET COMMIT DETAILS
+        # If Scylla already has a commit, use it.
+        # ----------------------------------------------------
+
+        if repository.last_commit_sha:
+            return repository
+
+        # ----------------------------------------------------
+        # First launch.
+        #
+        # Record current HEAD but do NOT send notification.
+        # ----------------------------------------------------
+
+        latest = (
+            await self.get_latest_commit()
+        )
+
+        if not latest:
+            return repository
+
+        sha = latest.get(
+            "sha"
+        )
+
+        if not sha:
+            return repository
+
+        await db.github.set_last_commit(
+            self.repository_key,
+            sha,
+        )
+
+        print(
+            f"[GitHub] Initialized "
+            f"{self.repository_key} at "
+            f"{sha[:7]}"
+        )
+
+        return await db.github.get(
+            self.repository_key
+        )
+
+    # ========================================================
+    # COMMIT PROCESSING
+    # ========================================================
+
+    async def process_commit(
+        self,
+        latest_commit: dict,
+        repository,
+    ):
+
+        current_sha = latest_commit.get(
+            "sha"
+        )
+
+        if not current_sha:
+            return
+
+        previous_sha = (
+            repository.last_commit_sha
+        )
+
+        # ----------------------------------------------------
+        # Nothing changed.
+        # ----------------------------------------------------
+
+        if current_sha == previous_sha:
+            return
+
+        # ----------------------------------------------------
+        # Get complete commit information.
         # ----------------------------------------------------
 
         detailed_commit = (
@@ -735,11 +958,11 @@ class GitHubCommits(commands.Cog):
             )
         )
 
-        if detailed_commit is None:
+        if not detailed_commit:
             return
 
         # ----------------------------------------------------
-        # GET REPOSITORY INFO
+        # Repository info.
         # ----------------------------------------------------
 
         repository_info = (
@@ -747,38 +970,287 @@ class GitHubCommits(commands.Cog):
         )
 
         # ----------------------------------------------------
-        # CREATE EMBED
+        # Channel.
+        # ----------------------------------------------------
+
+        channel = self.bot.get_channel(
+            CHANNEL_ID
+        )
+
+        if channel is None:
+
+            try:
+                channel = (
+                    await self.bot.fetch_channel(
+                        CHANNEL_ID
+                    )
+                )
+
+            except discord.HTTPException as error:
+
+                print(
+                    f"[GitHub] Could not access "
+                    f"channel {CHANNEL_ID}: "
+                    f"{error}"
+                )
+
+                return
+
+        # ----------------------------------------------------
+        # Build embed.
         # ----------------------------------------------------
 
         embed = self.create_embed(
             detailed_commit,
-            repository_info=repository_info,
-            previous_sha=self.last_commit
+            repository_info,
+            previous_sha,
         )
 
         # ----------------------------------------------------
-        # SEND
+        # Send notification FIRST.
+        #
+        # We only update Scylla after Discord confirms
+        # the message was sent successfully.
         # ----------------------------------------------------
 
         try:
+
             await channel.send(
                 embed=embed
             )
 
-            self.last_commit = current_sha
-            self.save_last_commit(
-                current_sha
-            )
-
-            print(
-                f"[GitHub] New commit detected: "
-                f"{current_sha[:7]}"
-            )
-
         except discord.HTTPException as error:
+
             print(
-                f"[GitHub] Failed to send commit "
+                f"[GitHub] Failed to send "
                 f"notification: {error}"
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # Extract commit data for persistence.
+        # ----------------------------------------------------
+
+        commit_info = (
+            detailed_commit.get(
+                "commit",
+                {},
+            )
+        )
+
+        timestamp = (
+            self.get_timestamp(
+                detailed_commit
+            )
+        )
+
+        if timestamp is None:
+            timestamp = (
+                datetime.now()
+            )
+
+        author = self.get_author(
+            detailed_commit
+        )
+
+        committer = self.get_committer(
+            detailed_commit
+        )
+
+        message = commit_info.get(
+            "message",
+            "",
+        )
+
+        branch = (
+            repository_info.get(
+                "default_branch",
+                repository.branch
+                or "main",
+            )
+            if repository_info
+            else (
+                repository.branch
+                or "main"
+            )
+        )
+
+        verification = (
+            commit_info.get(
+                "verification"
+            )
+            or {}
+        )
+
+        verified = bool(
+            verification.get(
+                "verified",
+                False,
+            )
+        )
+
+        stats = detailed_commit.get(
+            "stats",
+            {},
+        )
+
+        additions = int(
+            stats.get(
+                "additions",
+                0,
+            )
+        )
+
+        deletions = int(
+            stats.get(
+                "deletions",
+                0,
+            )
+        )
+
+        files = detailed_commit.get(
+            "files",
+            [],
+        )
+
+        changed_file_names = [
+            file.get(
+                "filename",
+                "Unknown",
+            )
+            for file in files
+        ]
+
+        # ----------------------------------------------------
+        # Persist commit history.
+        # ----------------------------------------------------
+
+        await db.github.record_commit(
+            self.repository_key,
+
+            committed_at=timestamp,
+
+            sha=current_sha,
+
+            author=author,
+
+            committer=committer,
+
+            message=message,
+
+            branch=branch,
+
+            verified=verified,
+
+            additions=additions,
+
+            deletions=deletions,
+
+            changed_files=len(files),
+
+            html_url=detailed_commit.get(
+                "html_url",
+                GITHUB_REPO,
+            ),
+
+            files=changed_file_names,
+        )
+
+        # ----------------------------------------------------
+        # Move repository HEAD forward.
+        # ----------------------------------------------------
+
+        await db.github.set_last_commit(
+            self.repository_key,
+            current_sha,
+        )
+
+        # ----------------------------------------------------
+        # Statistics.
+        # ----------------------------------------------------
+
+        await db.stats.increment(
+            "github_commits",
+            1,
+        )
+
+        print(
+            f"[GitHub] New commit "
+            f"{self.repository_key}@"
+            f"{current_sha[:7]}"
+        )
+
+    # ========================================================
+    # WATCHER
+    # ========================================================
+
+    @tasks.loop(seconds=CHECK_INTERVAL)
+    async def check_commits(self):
+
+        try:
+
+            repository = (
+                await db.github.get(
+                    self.repository_key
+                )
+            )
+
+            # ------------------------------------------------
+            # Register repository if necessary.
+            # ------------------------------------------------
+
+            if repository is None:
+
+                repository = (
+                    await self.ensure_repository()
+                )
+
+            if repository is None:
+                return
+
+            # ------------------------------------------------
+            # Respect disabled state.
+            # ------------------------------------------------
+
+            if not repository.enabled:
+                return
+
+            # ------------------------------------------------
+            # If it has never been initialized,
+            # establish the current HEAD without notifying.
+            # ------------------------------------------------
+
+            if not repository.last_commit_sha:
+
+                await self.initialize_repository()
+
+                return
+
+            # ------------------------------------------------
+            # Check latest commit.
+            # ------------------------------------------------
+
+            latest_commit = (
+                await self.get_latest_commit()
+            )
+
+            if latest_commit is None:
+                return
+
+            # ------------------------------------------------
+            # Process.
+            # ------------------------------------------------
+
+            await self.process_commit(
+                latest_commit,
+                repository,
+            )
+
+        except Exception as error:
+
+            print(
+                f"[GitHub] Watcher error: {error}"
             )
 
     # ========================================================
@@ -787,41 +1259,127 @@ class GitHubCommits(commands.Cog):
 
     @check_commits.before_loop
     async def before_check_commits(self):
+
         await self.bot.wait_until_ready()
+
+        # Make absolutely sure Scylla has been initialized.
+        if not getattr(
+            db,
+            "_initialized",
+            False,
+        ):
+
+            await db.initialize()
+
+        # Make sure repository exists before
+        # the first polling iteration.
+        await self.initialize_repository()
 
     # ========================================================
     # MANUAL CHECK
     # ========================================================
 
-    @commands.command(
-        name="githubcheck"
+    @commands.hybrid_command(
+        name="githubcheck",
+        description=(
+            "Check the latest GitHub commit."
+        ),
     )
     @commands.has_permissions(
         manage_guild=True
     )
     async def githubcheck(
         self,
-        ctx: commands.Context
+        ctx: commands.Context,
     ):
-        """
-        Manually check the configured
-        GitHub repository.
-        """
 
-        commit = await self.get_latest_commit()
+        latest = (
+            await self.get_latest_commit()
+        )
 
-        if commit is None:
+        if not latest:
+
             await ctx.send(
                 f"{EMOJI['error']} "
-                "Could not retrieve the latest GitHub commit."
+                "Unable to retrieve the "
+                "latest GitHub commit."
             )
+
             return
+
+        sha = latest.get(
+            "sha",
+            "unknown",
+        )
+
+        commit_url = latest.get(
+            "html_url",
+            GITHUB_REPO,
+        )
 
         await ctx.send(
             f"{EMOJI['approved']} "
             f"Latest commit: "
-            f"[`{commit['sha'][:7]}`]"
-            f"({commit['html_url']})"
+            f"[`{sha[:7]}`]"
+            f"({commit_url})"
+        )
+
+    # ========================================================
+    # MANUAL RE-SYNC
+    # ========================================================
+
+    @commands.hybrid_command(
+        name="githubsync",
+        description=(
+            "Set the stored GitHub commit to the "
+            "current repository HEAD."
+        ),
+    )
+    @commands.has_permissions(
+        manage_guild=True
+    )
+    async def githubsync(
+        self,
+        ctx: commands.Context,
+    ):
+
+        latest = (
+            await self.get_latest_commit()
+        )
+
+        if not latest:
+
+            await ctx.send(
+                f"{EMOJI['error']} "
+                "Could not retrieve the "
+                "latest GitHub commit."
+            )
+
+            return
+
+        sha = latest.get(
+            "sha"
+        )
+
+        if not sha:
+            await ctx.send(
+                f"{EMOJI['error']} "
+                "GitHub returned an invalid "
+                "commit response."
+            )
+
+            return
+
+        await db.github.set_last_commit(
+            self.repository_key,
+            sha,
+        )
+
+        await ctx.send(
+            f"{EMOJI['approved']} "
+            f"GitHub monitor synchronized "
+            f"to [`{sha[:7]}`]"
+            f"({latest['html_url']})."
         )
 
 
@@ -829,7 +1387,9 @@ class GitHubCommits(commands.Cog):
 # SETUP
 # ============================================================
 
-async def setup(bot: commands.Bot):
+async def setup(
+    bot: commands.Bot,
+):
     await bot.add_cog(
         GitHubCommits(bot)
     )

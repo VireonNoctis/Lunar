@@ -536,7 +536,26 @@ CORE_SCHEMA: tuple[str, ...] = (
     )
     """,
 )
+# ============================================================
+# MENTION REPOSITORY
+# ============================================================
 
+"""
+CREATE TABLE IF NOT EXISTS mentions_by_user (
+    mentioned_id text,
+    archived boolean,
+    is_read boolean,
+    created_at timestamp,
+    id uuid,
+
+    message_id text,
+    message_author_id text,
+    channel_id text,
+    guild_id text,
+
+    PRIMARY KEY ((mentioned_id, archived, is_read), created_at, id)
+) WITH CLUSTERING ORDER BY (created_at DESC, id DESC)
+""",
 
 # ============================================================
 # DATABASE ENGINE
@@ -2413,7 +2432,179 @@ class ExtensionRepository(BaseRepository):
             row.value,
             default,
         )
+# ============================================================
+# MENTION REPOSITORY
+# ============================================================
 
+class MentionRepository(BaseRepository):
+
+    async def create(
+        self,
+        *,
+        mentioned_id: int | str,
+        message_id: int | str,
+        message_author_id: int | str,
+        channel_id: int | str,
+        guild_id: int | str,
+        created_at: Optional[datetime] = None,
+    ) -> None:
+        await self.db.execute(
+            """
+            INSERT INTO mentions_by_user (
+                mentioned_id,
+                archived,
+                is_read,
+                created_at,
+                id,
+                message_id,
+                message_author_id,
+                channel_id,
+                guild_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """.replace("?", "%s"),
+            (
+                str(mentioned_id),
+                False,
+                False,
+                created_at or utcnow(),
+                uuid.uuid4(),
+                str(message_id),
+                str(message_author_id),
+                str(channel_id),
+                str(guild_id),
+            ),
+        )
+
+    async def unread(
+        self,
+        mentioned_id: int | str,
+        *,
+        limit: int = 10,
+    ):
+        return await self.db.execute(
+            """
+            SELECT *
+            FROM mentions_by_user
+            WHERE mentioned_id = ?
+              AND archived = false
+              AND is_read = false
+            LIMIT ?
+            """.replace("?", "%s"),
+            (
+                str(mentioned_id),
+                limit,
+            ),
+        )
+
+    async def mark_read(self, row) -> None:
+        await self.db.execute(
+            """
+            INSERT INTO mentions_by_user (
+                mentioned_id,
+                archived,
+                is_read,
+                created_at,
+                id,
+                message_id,
+                message_author_id,
+                channel_id,
+                guild_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """.replace("?", "%s"),
+            (
+                row.mentioned_id,
+                bool(row.archived),
+                True,
+                row.created_at,
+                row.id,
+                row.message_id,
+                row.message_author_id,
+                row.channel_id,
+                row.guild_id,
+            ),
+        )
+
+        await self.db.execute(
+            """
+            DELETE FROM mentions_by_user
+            WHERE mentioned_id = ?
+              AND archived = ?
+              AND is_read = ?
+              AND created_at = ?
+              AND id = ?
+            """.replace("?", "%s"),
+            (
+                row.mentioned_id,
+                bool(row.archived),
+                False,
+                row.created_at,
+                row.id,
+            ),
+        )
+
+    async def mark_all_read(self, mentioned_id: int | str) -> None:
+        result = await self.unread(
+            mentioned_id,
+            limit=100,
+        )
+
+        for row in result:
+            await self.mark_read(row)
+
+    async def archive_all(self, mentioned_id: int | str) -> None:
+        result = await self.unread(
+            mentioned_id,
+            limit=100,
+        )
+
+        for row in result:
+            await self.db.execute(
+                """
+                INSERT INTO mentions_by_user (
+                    mentioned_id,
+                    archived,
+                    is_read,
+                    created_at,
+                    id,
+                    message_id,
+                    message_author_id,
+                    channel_id,
+                    guild_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.replace("?", "%s"),
+                (
+                    row.mentioned_id,
+                    True,
+                    bool(row.is_read),
+                    row.created_at,
+                    row.id,
+                    row.message_id,
+                    row.message_author_id,
+                    row.channel_id,
+                    row.guild_id,
+                ),
+            )
+
+            await self.db.execute(
+                """
+                DELETE FROM mentions_by_user
+                WHERE mentioned_id = ?
+                  AND archived = ?
+                  AND is_read = ?
+                  AND created_at = ?
+                  AND id = ?
+                """.replace("?", "%s"),
+                (
+                    row.mentioned_id,
+                    bool(row.archived),
+                    bool(row.is_read),
+                    row.created_at,
+                    row.id,
+                ),
+            )
 
 # ============================================================
 # CSV MIGRATION

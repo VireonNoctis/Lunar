@@ -469,9 +469,8 @@ CORE_SCHEMA: tuple[str, ...] = (
     """,
 
     # ========================================================
-    # GITHUB COMMITS
+    # GITHUB COMMITS & ISSUES
     # ========================================================
-
     """
     CREATE TABLE IF NOT EXISTS github_commits (
         repository text,
@@ -507,6 +506,32 @@ CORE_SCHEMA: tuple[str, ...] = (
     )
     WITH CLUSTERING ORDER BY (
         committed_at DESC
+    )
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS github_issues (
+        repository text,
+        issue_number int,
+
+        title text,
+        body text,
+
+        author_id text,
+
+        html_url text,
+
+        state text,
+        issue_type text,
+
+        created_at timestamp,
+
+        metadata map<text, text>,
+
+        PRIMARY KEY (
+            repository,
+            issue_number
+        )
     )
     """,
 
@@ -2183,7 +2208,6 @@ class StatsRepository(BaseRepository):
 # ============================================================
 # GITHUB
 # ============================================================
-
 class GitHubRepository(BaseRepository):
 
     async def register_repository(
@@ -2354,6 +2378,99 @@ class GitHubRepository(BaseRepository):
 
         return result.all()
 
+    # ═══════════════════════════════════════════
+    # GitHub Issues / Suggestions
+    # ═══════════════════════════════════════════
+
+    async def record_issue(
+        self,
+        repository: str,
+        *,
+        issue_number: int,
+        title: str,
+        body: str,
+        author_id: int | str,
+        html_url: str,
+        state: str = "open",
+        issue_type: str = "suggestion",
+        metadata: Optional[
+            Mapping[str, str]
+        ] = None,
+    ):
+        """Record a GitHub issue created through the bot."""
+
+        await self.query(
+            """
+            INSERT INTO github_issues (
+                repository,
+                issue_number,
+                title,
+                body,
+                author_id,
+                html_url,
+                state,
+                issue_type,
+                created_at,
+                metadata
+            )
+            VALUES (
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?
+            )
+            """,
+            (
+                repository,
+                issue_number,
+                title,
+                body,
+                str(author_id),
+                html_url,
+                state,
+                issue_type,
+                utcnow(),
+                dict(metadata or {}),
+            ),
+        )
+
+    async def get_issue(
+        self,
+        repository: str,
+        issue_number: int,
+    ):
+
+        return await self.one(
+            """
+            SELECT *
+            FROM github_issues
+            WHERE repository = ?
+            AND issue_number = ?
+            """,
+            (
+                repository,
+                issue_number,
+            ),
+        )
+
+    async def recent_issues(
+        self,
+        repository: str,
+        limit: int = 25,
+    ):
+
+        result = await self.query(
+            """
+            SELECT *
+            FROM github_issues
+            WHERE repository = ?
+            LIMIT ?
+            """,
+            (
+                repository,
+                limit,
+            ),
+        )
+
+        return result.all()
 
 # ============================================================
 # EXTENSION STORAGE

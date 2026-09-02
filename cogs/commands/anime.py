@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from typing import Optional
 
 import aiohttp
 import discord
@@ -34,6 +35,8 @@ REQUEST_TIMEOUT = aiohttp.ClientTimeout(
     sock_connect=5,
     sock_read=10,
 )
+
+LOADING_TIME = 2.5
 
 
 # ============================================================
@@ -142,11 +145,11 @@ query ($id: Int!) {
 
 
 # ============================================================
-# TEXT
+# TEXT HELPERS
 # ============================================================
 
 def clean_text(
-    value: str | None,
+    value: Optional[str],
 ) -> str:
 
     if not value:
@@ -192,26 +195,27 @@ def get_url(
         "id"
     )
 
-    return anime.get(
-        "siteUrl"
-    ) or (
-        f"https://anilist.co/anime/{anime_id}"
+    return (
+        anime.get("siteUrl")
+        or f"https://anilist.co/anime/{anime_id}"
     )
 
 
 # ============================================================
-# EMBED
+# ANIME EMBED
 # ============================================================
 
 def build_anime_embed(
     anime: dict,
     *,
-    title: str,
+    heading: str,
     color: discord.Color,
 ) -> discord.Embed:
 
     description = clean_text(
-        anime.get("description")
+        anime.get(
+            "description"
+        )
     )
 
     if len(description) > 700:
@@ -227,7 +231,7 @@ def build_anime_embed(
 
     embed = discord.Embed(
         title=(
-            f"{title} "
+            f"{heading} "
             f"{get_title(anime)}"
         ),
         url=get_url(
@@ -262,17 +266,23 @@ def build_anime_embed(
     )
 
     episodes = (
-        anime.get("episodes")
+        anime.get(
+            "episodes"
+        )
         or "?"
     )
 
     duration = (
-        anime.get("duration")
+        anime.get(
+            "duration"
+        )
         or "?"
     )
 
     status = (
-        anime.get("status")
+        anime.get(
+            "status"
+        )
         or "UNKNOWN"
     )
 
@@ -281,7 +291,9 @@ def build_anime_embed(
     ) or []
 
     genre_text = (
-        ", ".join(genres[:5])
+        ", ".join(
+            genres[:5]
+        )
         if genres
         else "Unknown"
     )
@@ -311,14 +323,14 @@ def build_anime_embed(
 
 
 # ============================================================
-# ANILIST API
+# HTTP
 # ============================================================
 
 async def anilist_request(
     session: aiohttp.ClientSession,
     query: str,
-    variables: dict | None = None,
-) -> dict | None:
+    variables: Optional[dict] = None,
+) -> Optional[dict]:
 
     try:
 
@@ -350,24 +362,23 @@ async def anilist_request(
 
             return data
 
-    except Exception:
+    except (
+        aiohttp.ClientError,
+        asyncio.TimeoutError,
+    ):
 
         return None
 
 
-# ============================================================
-# LUNAR API
-# ============================================================
-
 async def fetch_lunar_profile(
     username: str,
-) -> dict | None:
+) -> Optional[dict]:
 
-    async with aiohttp.ClientSession(
-        timeout=REQUEST_TIMEOUT
-    ) as session:
+    try:
 
-        try:
+        async with aiohttp.ClientSession(
+            timeout=REQUEST_TIMEOUT
+        ) as session:
 
             async with session.get(
                 LUNAR_PROFILE_API,
@@ -399,68 +410,34 @@ async def fetch_lunar_profile(
 
                 return profile
 
-        except Exception:
+    except (
+        aiohttp.ClientError,
+        asyncio.TimeoutError,
+    ):
 
-            return None
+        return None
 
 
 # ============================================================
 # DATABASE
 # ============================================================
 
-async def get_lunar_username(
+async def get_linked_username(
     user_id: int,
-) -> str | None:
+) -> Optional[str]:
 
-    account = await db.account_links.get(
-        str(user_id)
-    )
+    try:
 
-    if not account:
-        return None
-
-    if not getattr(
-        account,
-        "verified",
-        False,
-    ):
-        return None
-
-    metadata = (
-        getattr(
-            account,
-            "metadata",
-            None,
-        )
-        or {}
-    )
-
-    username = metadata.get(
-        "username"
-    )
-
-    if not username:
-        username = metadata.get(
-            "lunar_username"
+        return await db.account_links.get_username(
+            str(user_id)
         )
 
-    if not isinstance(
-        username,
-        str,
-    ):
+    except Exception:
         return None
-
-    username = username.strip()
-
-    return (
-        username
-        if username
-        else None
-    )
 
 
 # ============================================================
-# ANILIST WATCHLIST EXTRACTION
+# WATCHLIST
 # ============================================================
 
 def extract_anime_ids(
@@ -477,10 +454,6 @@ def extract_anime_ids(
             current,
             dict,
         ):
-
-            # ------------------------------------------------
-            # Explicit anime/media identifiers
-            # ------------------------------------------------
 
             for key in (
                 "animeId",
@@ -499,6 +472,7 @@ def extract_anime_ids(
                     candidate,
                     int,
                 ):
+
                     found.add(
                         candidate
                     )
@@ -510,13 +484,10 @@ def extract_anime_ids(
                     )
                     and candidate.isdigit()
                 ):
+
                     found.add(
                         int(candidate)
                     )
-
-            # ------------------------------------------------
-            # AniList Media object
-            # ------------------------------------------------
 
             if current.get(
                 "type"
@@ -530,6 +501,7 @@ def extract_anime_ids(
                     anime_id,
                     int,
                 ):
+
                     found.add(
                         anime_id
                     )
@@ -541,16 +513,15 @@ def extract_anime_ids(
                     )
                     and anime_id.isdigit()
                 ):
+
                     found.add(
                         int(anime_id)
                     )
 
-            # ------------------------------------------------
-            # Continue recursively
-            # ------------------------------------------------
-
             for child in current.values():
-                walk(child)
+                walk(
+                    child
+                )
 
         elif isinstance(
             current,
@@ -558,7 +529,9 @@ def extract_anime_ids(
         ):
 
             for child in current:
-                walk(child)
+                walk(
+                    child
+                )
 
     walk(
         value
@@ -567,7 +540,7 @@ def extract_anime_ids(
     return found
 
 
-def get_watchlist_ids(
+def extract_watchlist_ids(
     profile: dict,
 ) -> set[int]:
 
@@ -583,7 +556,7 @@ def get_watchlist_ids(
         dict,
     ):
 
-        preferred_keys = (
+        preferred = (
             "watchlist",
             "watch_list",
             "anime_watchlist",
@@ -592,7 +565,7 @@ def get_watchlist_ids(
             "entries",
         )
 
-        for key in preferred_keys:
+        for key in preferred:
 
             value = (
                 anilist_profile.get(
@@ -618,7 +591,7 @@ def get_watchlist_ids(
 # RANDOM ANIME
 # ============================================================
 
-async def fetch_random_anime() -> dict | None:
+async def get_random_anime() -> Optional[dict]:
 
     async with aiohttp.ClientSession(
         timeout=REQUEST_TIMEOUT
@@ -642,9 +615,6 @@ async def fetch_random_anime() -> dict | None:
             )
         )
 
-        if not media:
-            return None
-
         media = [
             anime
             for anime in media
@@ -654,44 +624,43 @@ async def fetch_random_anime() -> dict | None:
         if not media:
             return None
 
-        # ----------------------------------------------------
-        # Cryptographic selection
-        # ----------------------------------------------------
-
-        ids = [
+        anime_ids = [
             str(
                 anime["id"]
             )
             for anime in media
         ]
 
-        result = (
+        selection = (
             CryptographicRandomizer.select(
-                ids,
+                anime_ids,
                 1,
-                context="animeoptions.random",
+                context="anime.random",
             )
         )
 
         selected_id = int(
-            result.winners[0]
+            selection.winners[0]
         )
 
         for anime in media:
 
-            if anime["id"] == selected_id:
+            if anime.get(
+                "id"
+            ) == selected_id:
+
                 return anime
 
     return None
 
 
 # ============================================================
-# PERSONALIZED RECOMMENDATION
+# RECOMMENDATION ENGINE
 # ============================================================
 
-async def recommend(
+async def get_recommendation(
     watchlist_ids: set[int],
-) -> dict | None:
+) -> Optional[dict]:
 
     if not watchlist_ids:
         return None
@@ -705,8 +674,7 @@ async def recommend(
         len(seed_ids),
     )
 
-    # Select the seed anime cryptographically.
-    seeds = (
+    seed_selection = (
         CryptographicRandomizer.select(
             [
                 str(
@@ -715,13 +683,15 @@ async def recommend(
                 for anime_id in seed_ids
             ],
             seed_count,
-            context="animeoptions.rec.seeds",
+            context="anime.rec.seeds",
         )
     )
 
-    selected_seed_ids = [
-        int(value)
-        for value in seeds.winners
+    selected_seeds = [
+        int(
+            value
+        )
+        for value in seed_selection.winners
     ]
 
     candidates: dict[int, dict] = {}
@@ -730,7 +700,7 @@ async def recommend(
         timeout=REQUEST_TIMEOUT
     ) as session:
 
-        for seed_id in selected_seed_ids:
+        for seed_id in selected_seeds:
 
             data = await anilist_request(
                 session,
@@ -764,8 +734,10 @@ async def recommend(
 
             for node in nodes:
 
-                anime = node.get(
-                    "mediaRecommendation"
+                anime = (
+                    node.get(
+                        "mediaRecommendation"
+                    )
                 )
 
                 if not anime:
@@ -778,8 +750,6 @@ async def recommend(
                 if not anime_id:
                     continue
 
-                # Never recommend something already
-                # present in the user's watchlist.
                 if anime_id in watchlist_ids:
                     continue
 
@@ -789,10 +759,6 @@ async def recommend(
 
     if not candidates:
         return None
-
-    # --------------------------------------------------------
-    # Rank candidates
-    # --------------------------------------------------------
 
     ranked = sorted(
         candidates.values(),
@@ -805,39 +771,34 @@ async def recommend(
         reverse=True,
     )
 
-    # Don't let one recommendation completely dominate.
-    top = ranked[
+    top_candidates = ranked[
         :min(
             10,
             len(ranked),
         )
     ]
 
-    if not top:
+    if not top_candidates:
         return None
 
-    # --------------------------------------------------------
-    # Cryptographically choose final result
-    # --------------------------------------------------------
-
-    result = (
+    selected = (
         CryptographicRandomizer.select(
             [
                 str(
                     anime["id"]
                 )
-                for anime in top
+                for anime in top_candidates
             ],
             1,
-            context="animeoptions.rec.result",
+            context="anime.rec.result",
         )
     )
 
     selected_id = int(
-        result.winners[0]
+        selected.winners[0]
     )
 
-    for anime in top:
+    for anime in top_candidates:
 
         if anime.get(
             "id"
@@ -849,10 +810,67 @@ async def recommend(
 
 
 # ============================================================
-# COG
+# MODE SELECTION VIEW
 # ============================================================
 
-class AnimeOptions(
+class AnimeModeView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        cog: "Anime",
+    ):
+
+        super().__init__(
+            timeout=60
+        )
+
+        self.cog = cog
+
+    @discord.ui.button(
+        label="Recommendation",
+        style=discord.ButtonStyle.primary,
+        emoji="💜",
+    )
+    async def recommendation(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        await self.cog.run_recommendation(
+            interaction
+        )
+
+    @discord.ui.button(
+        label="Random Anime",
+        style=discord.ButtonStyle.secondary,
+        emoji="🎲",
+    )
+    async def random(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        await self.cog.run_random(
+            interaction
+        )
+
+    async def on_timeout(
+        self,
+    ):
+
+        for item in self.children:
+            item.disabled = True
+
+
+# ============================================================
+# ANIME COG
+# ============================================================
+
+class Anime(
     commands.Cog
 ):
 
@@ -860,41 +878,131 @@ class AnimeOptions(
         self,
         bot: commands.Bot,
     ):
+
         self.bot = bot
 
     # ========================================================
-    # GROUP
+    # /ANIME
     # ========================================================
 
-    animeoptions = app_commands.Group(
-        name="animeoptions",
-        description="Anime discovery and recommendation tools.",
+    @app_commands.command(
+        name="anime",
+        description="Get an anime recommendation or random anime.",
     )
+    @app_commands.describe(
+        mode="Choose recommendation or random.",
+    )
+    @app_commands.choices(
+        mode=[
+            app_commands.Choice(
+                name="Recommendation",
+                value="rec",
+            ),
+            app_commands.Choice(
+                name="Random",
+                value="random",
+            ),
+        ]
+    )
+    async def anime(
+        self,
+        interaction: discord.Interaction,
+        mode: Optional[
+            app_commands.Choice[str]
+        ] = None,
+    ):
+
+        # ----------------------------------------------------
+        # No mode selected
+        # ----------------------------------------------------
+
+        if mode is None:
+
+            embed = discord.Embed(
+                title=(
+                    f"{EMOJI['lunar']} "
+                    "Anime Archives"
+                ),
+                description=(
+                    f"{EMOJI['aniheart']} "
+                    "What are you looking for?\n\n"
+                    "**Recommendation**\n"
+                    "> I'll analyze your Lunar watchlist "
+                    "and find something suited to it.\n\n"
+                    "**Random Anime**\n"
+                    "> Let the archive choose something "
+                    "completely random."
+                ),
+                color=discord.Color.blurple(),
+            )
+
+            embed.set_footer(
+                text="Choose an option below"
+            )
+
+            await interaction.response.send_message(
+                embed=embed,
+                view=AnimeModeView(
+                    self
+                ),
+                ephemeral=True,
+            )
+
+            return
+
+        if mode.value == "rec":
+
+            await self.run_recommendation(
+                interaction
+            )
+
+            return
+
+        await self.run_random(
+            interaction
+        )
 
     # ========================================================
     # RANDOM
     # ========================================================
 
-    @animeoptions.command(
-        name="random",
-        description="Discover a random anime.",
-    )
-    async def random(
+    async def run_random(
         self,
         interaction: discord.Interaction,
     ):
 
-        await interaction.response.send_message(
-            f"{EMOJI['loading']} "
-            "Searching the anime archives...",
-            ephemeral=True,
-        )
+        # ----------------------------------------------------
+        # INITIAL RESPONSE
+        # ----------------------------------------------------
+
+        if not interaction.response.is_done():
+
+            await interaction.response.send_message(
+                f"{EMOJI['loading']} "
+                "Searching the anime archives...",
+                ephemeral=True,
+            )
+
+        else:
+
+            await interaction.edit_original_response(
+                content=(
+                    f"{EMOJI['loading']} "
+                    "Searching the anime archives..."
+                ),
+                embed=None,
+                view=None,
+            )
 
         await asyncio.sleep(
-            1
+            LOADING_TIME
         )
 
-        anime = await fetch_random_anime()
+        # ----------------------------------------------------
+        # FETCH
+        # ----------------------------------------------------
+
+        anime = await get_random_anime()
 
         if not anime:
 
@@ -906,7 +1014,8 @@ class AnimeOptions(
                 description=(
                     f"{EMOJI['denied']} "
                     "AniList didn't return a valid "
-                    "anime right now. Try again."
+                    "anime right now.\n\n"
+                    "Please try again."
                 ),
                 color=discord.Color.red(),
             )
@@ -914,13 +1023,18 @@ class AnimeOptions(
             await interaction.edit_original_response(
                 content=None,
                 embed=embed,
+                view=None,
             )
 
             return
 
+        # ----------------------------------------------------
+        # RESULT
+        # ----------------------------------------------------
+
         embed = build_anime_embed(
             anime,
-            title=(
+            heading=(
                 f"{EMOJI['lunar']} Random Pick:"
             ),
             color=discord.Color.blurple(),
@@ -928,7 +1042,7 @@ class AnimeOptions(
 
         embed.description = (
             f"{EMOJI['approved']} "
-            "The archive has selected an anime for you.\n\n"
+            "The archive selected this anime for you.\n\n"
             + (
                 embed.description
                 or ""
@@ -938,44 +1052,52 @@ class AnimeOptions(
         await interaction.edit_original_response(
             content=None,
             embed=embed,
+            view=None,
         )
 
     # ========================================================
     # RECOMMENDATION
     # ========================================================
 
-    @animeoptions.command(
-        name="rec",
-        description="Get an anime recommendation from your Lunar watchlist.",
-    )
-    async def rec(
+    async def run_recommendation(
         self,
         interaction: discord.Interaction,
     ):
 
         # ----------------------------------------------------
-        # STEP 1 — ACCOUNT
+        # INITIAL RESPONSE
         # ----------------------------------------------------
 
-        await interaction.response.send_message(
-            f"{EMOJI['loading']} "
-            "Checking your Lunar account...",
-            ephemeral=True,
-        )
+        if not interaction.response.is_done():
 
-        await asyncio.sleep(
-            1
-        )
-
-        try:
-
-            username = await get_lunar_username(
-                interaction.user.id
+            await interaction.response.send_message(
+                f"{EMOJI['loading']} "
+                "Checking your Lunar account...",
+                ephemeral=True,
             )
 
-        except Exception:
+        else:
 
-            username = None
+            await interaction.edit_original_response(
+                content=(
+                    f"{EMOJI['loading']} "
+                    "Checking your Lunar account..."
+                ),
+                embed=None,
+                view=None,
+            )
+
+        await asyncio.sleep(
+            LOADING_TIME
+        )
+
+        # ----------------------------------------------------
+        # LINKED USERNAME
+        # ----------------------------------------------------
+
+        username = await get_linked_username(
+            interaction.user.id
+        )
 
         if not username:
 
@@ -987,9 +1109,8 @@ class AnimeOptions(
                 description=(
                     f"{EMOJI['denied']} "
                     "You need a verified Lunar account "
-                    "before I can create a personalized "
-                    "recommendation.\n\n"
-                    "Use `/link` to connect your Lunar account."
+                    "to use personalized recommendations.\n\n"
+                    "Use `/link` to connect your account."
                 ),
                 color=discord.Color.orange(),
             )
@@ -997,23 +1118,26 @@ class AnimeOptions(
             await interaction.edit_original_response(
                 content=None,
                 embed=embed,
+                view=None,
             )
 
             return
 
         # ----------------------------------------------------
-        # STEP 2 — LUNAR PROFILE
+        # PROFILE
         # ----------------------------------------------------
 
         await interaction.edit_original_response(
             content=(
                 f"{EMOJI['loading']} "
-                f"Reading Lunar profile for `{username}`..."
-            )
+                f"Reading `{username}`'s Lunar profile..."
+            ),
+            embed=None,
+            view=None,
         )
 
         await asyncio.sleep(
-            1
+            LOADING_TIME
         )
 
         profile = await fetch_lunar_profile(
@@ -1038,16 +1162,19 @@ class AnimeOptions(
             await interaction.edit_original_response(
                 content=None,
                 embed=embed,
+                view=None,
             )
 
             return
 
         # ----------------------------------------------------
-        # STEP 3 — WATCHLIST
+        # WATCHLIST
         # ----------------------------------------------------
 
-        watchlist_ids = get_watchlist_ids(
-            profile
+        watchlist_ids = (
+            extract_watchlist_ids(
+                profile
+            )
         )
 
         if not watchlist_ids:
@@ -1059,46 +1186,48 @@ class AnimeOptions(
                 ),
                 description=(
                     f"{EMOJI['denied']} "
-                    "Lunar returned your profile, but it "
-                    "isn't currently providing AniList "
-                    "watchlist data.\n\n"
-                    "Make sure your AniList account is "
-                    "connected to Lunar."
+                    "Lunar returned your profile, but "
+                    "there isn't an AniList watchlist "
+                    "available to analyze.\n\n"
+                    "Connect AniList to Lunar and try again."
                 ),
                 color=discord.Color.orange(),
             )
 
             embed.set_footer(
-                text=(
-                    f"Lunar Account • {username}"
-                )
+                text=f"Lunar Account • {username}"
             )
 
             await interaction.edit_original_response(
                 content=None,
                 embed=embed,
+                view=None,
             )
 
             return
 
         # ----------------------------------------------------
-        # STEP 4 — RECOMMENDATION
+        # RECOMMENDATION
         # ----------------------------------------------------
 
         await interaction.edit_original_response(
             content=(
                 f"{EMOJI['loading']} "
-                f"Analyzed `{len(watchlist_ids):,}` anime. "
-                "Finding something new..."
-            )
+                f"Analyzed `{len(watchlist_ids):,}` anime.\n"
+                "Finding something you haven't watched..."
+            ),
+            embed=None,
+            view=None,
         )
 
         await asyncio.sleep(
-            1
+            LOADING_TIME
         )
 
-        recommendation = await recommend(
-            watchlist_ids
+        recommendation = (
+            await get_recommendation(
+                watchlist_ids
+            )
         )
 
         if not recommendation:
@@ -1111,7 +1240,7 @@ class AnimeOptions(
                 description=(
                     f"{EMOJI['denied']} "
                     "I couldn't find a suitable anime "
-                    "outside your current watchlist."
+                    "outside your watchlist."
                 ),
                 color=discord.Color.orange(),
             )
@@ -1119,6 +1248,7 @@ class AnimeOptions(
             await interaction.edit_original_response(
                 content=None,
                 embed=embed,
+                view=None,
             )
 
             return
@@ -1129,7 +1259,7 @@ class AnimeOptions(
 
         embed = build_anime_embed(
             recommendation,
-            title=(
+            heading=(
                 f"{EMOJI['aniheart']} "
                 "Recommended:"
             ),
@@ -1138,9 +1268,9 @@ class AnimeOptions(
 
         embed.description = (
             f"{EMOJI['approved']} "
-            f"Recommendation generated from "
-            f"`{len(watchlist_ids):,}` anime on your Lunar "
-            "watchlist.\n\n"
+            "Based on your Lunar watchlist.\n"
+            f"{EMOJI['moon']} "
+            f"Analyzed `{len(watchlist_ids):,}` anime.\n\n"
             + (
                 embed.description
                 or ""
@@ -1156,6 +1286,7 @@ class AnimeOptions(
         await interaction.edit_original_response(
             content=None,
             embed=embed,
+            view=None,
         )
 
 
@@ -1168,5 +1299,5 @@ async def setup(
 ):
 
     await bot.add_cog(
-        AnimeOptions(bot)
+        Anime(bot)
     )

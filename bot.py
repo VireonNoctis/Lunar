@@ -3,7 +3,7 @@ import importlib
 import logging
 import os
 from pathlib import Path
-
+from utilities.database import db
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -248,8 +248,13 @@ async def on_ready():
 async def main():
     COGS_DIR.mkdir(parents=True, exist_ok=True)
 
-    async with bot:
-        await bot.start(TOKEN)
+    await db.initialize()
+
+    try:
+        async with bot:
+            await bot.start(TOKEN)
+    finally:
+        await db.close()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,4 @@
 
-
 from __future__ import annotations
 
 import asyncio
@@ -169,6 +168,39 @@ CORE_SCHEMA: tuple[str, ...] = (
         snowflake_id text PRIMARY KEY,
 
         lunar_uuid uuid,
+
+        verification_code text,
+
+        verified boolean,
+
+        last_message_time timestamp,
+
+        verified_at timestamp,
+        created_at timestamp,
+        updated_at timestamp,
+
+        metadata map<text, text>
+    )
+    """,
+
+    # ========================================================
+    # ACCOUNT LINKS (BY LUNAR UUID)
+    # ========================================================
+    #
+    # Dedicated lookup table for the "find account by Lunar UUID"
+    # access pattern, per the modeling rule at the bottom of this
+    # file: prefer a query-oriented table over a secondary index.
+    #
+    # This is kept in sync with `account_links` by
+    # AccountLinkRepository (dual-write on link()/set_verified()).
+    #
+    # ========================================================
+
+    """
+    CREATE TABLE IF NOT EXISTS account_links_by_uuid (
+        lunar_uuid uuid PRIMARY KEY,
+
+        snowflake_id text,
 
         verification_code text,
 
@@ -1371,14 +1403,21 @@ class AccountLinkRepository(BaseRepository):
         lunar_uuid: str | uuid.UUID,
     ):
         #
-        # This query intentionally isn't used as the primary lookup
+        # Backed by the dedicated `account_links_by_uuid` table,
+        # kept in sync by link() / set_verified() below, per the
+        # modeling rule at the bottom of this file: prefer a
+        # query-oriented table over a secondary index.
         #
-        # If this becomes common, create a dedicated
-        # account_links_by_uuid table.
-        #
-        raise NotImplementedError(
-            "Create an account_links_by_uuid table "
-            "for this access pattern."
+
+        return await self.one(
+            """
+            SELECT *
+            FROM account_links_by_uuid
+            WHERE lunar_uuid = ?
+            """,
+            (
+                uuid.UUID(str(lunar_uuid)),
+            ),
         )
 
     async def link(
@@ -1395,32 +1434,72 @@ class AccountLinkRepository(BaseRepository):
 
         now = utcnow()
 
-        await self.query(
-            """
-            INSERT INTO account_links (
-                snowflake_id,
-                lunar_uuid,
-                verification_code,
-                verified,
-                last_message_time,
-                verified_at,
-                created_at,
-                updated_at,
-                metadata
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(snowflake_id),
-                uuid.UUID(str(lunar_uuid)),
-                verification_code,
-                verified,
-                last_message_time,
-                now if verified else None,
-                now,
-                now,
-                {},
-            ),
+        parsed_uuid = uuid.UUID(
+            str(lunar_uuid)
+        )
+
+        verified_at = (
+            now if verified else None
+        )
+
+        await self.db.batch(
+            [
+                (
+                    """
+                    INSERT INTO account_links (
+                        snowflake_id,
+                        lunar_uuid,
+                        verification_code,
+                        verified,
+                        last_message_time,
+                        verified_at,
+                        created_at,
+                        updated_at,
+                        metadata
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(snowflake_id),
+                        parsed_uuid,
+                        verification_code,
+                        verified,
+                        last_message_time,
+                        verified_at,
+                        now,
+                        now,
+                        {},
+                    ),
+                ),
+                (
+                    """
+                    INSERT INTO account_links_by_uuid (
+                        lunar_uuid,
+                        snowflake_id,
+                        verification_code,
+                        verified,
+                        last_message_time,
+                        verified_at,
+                        created_at,
+                        updated_at,
+                        metadata
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        parsed_uuid,
+                        str(snowflake_id),
+                        verification_code,
+                        verified,
+                        last_message_time,
+                        verified_at,
+                        now,
+                        now,
+                        {},
+                    ),
+                ),
+            ],
+            logged=True,
         )
 
     async def set_verified(
@@ -1428,6 +1507,16 @@ class AccountLinkRepository(BaseRepository):
         snowflake_id: int | str,
         verified: bool,
     ):
+
+        now = utcnow()
+
+        verified_at = (
+            now if verified else None
+        )
+
+        existing = await self.get(
+            snowflake_id
+        )
 
         await self.query(
             """
@@ -1440,11 +1529,35 @@ class AccountLinkRepository(BaseRepository):
             """,
             (
                 verified,
-                utcnow() if verified else None,
-                utcnow(),
+                verified_at,
+                now,
                 str(snowflake_id),
             ),
         )
+
+        # Keep the uuid-keyed lookup table in sync.
+        #
+        # We need the lunar_uuid to update the by-uuid row, so we
+        # read it back from the primary table first.
+
+        if existing and existing.lunar_uuid:
+
+            await self.query(
+                """
+                UPDATE account_links_by_uuid
+                SET
+                    verified = ?,
+                    verified_at = ?,
+                    updated_at = ?
+                WHERE lunar_uuid = ?
+                """,
+                (
+                    verified,
+                    verified_at,
+                    now,
+                    existing.lunar_uuid,
+                ),
+            )
 
 
 # ============================================================

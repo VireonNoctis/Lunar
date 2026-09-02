@@ -585,7 +585,7 @@ class ScyllaDatabase:
         # ----------------------------------------------------
 
         self.users: Optional[UserRepository] = None
-
+        self.mentions: Optional[MentionRepository] = None
         self.account_links: Optional[
             AccountLinkRepository
         ] = None
@@ -850,7 +850,7 @@ class ScyllaDatabase:
         self.extensions = ExtensionRepository(
             self
         )
-
+        self.mentions = MentionRepository(self)
         # ====================================================
         # EXTENSION AREA
         # ====================================================

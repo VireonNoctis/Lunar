@@ -823,7 +823,9 @@ class ScyllaDatabase:
     # ========================================================
 
     def _bind_repositories(self):
-
+    self.users = UserRepository(self)
+    self.xp_events = XPEventRepository(self)
+    self.variables = VariableRepository(self)
         self.users = UserRepository(self)
 
         self.account_links = (

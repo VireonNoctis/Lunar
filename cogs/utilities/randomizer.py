@@ -499,7 +499,68 @@ class CryptographicRandomizer:
             result.proof,
             expected_proof,
         )
+    # ========================================================
+    # COIN FLIP
+    # ========================================================
 
+    @classmethod
+    def coinflip(
+        cls,
+        *,
+        seed: bytes | None = None,
+    ) -> tuple[str, str]:
+        """
+        Perform a cryptographically secure coin flip.
+
+        Returns:
+
+            (result, proof)
+
+        Result is either:
+            "heads"
+            "tails"
+        """
+
+        if seed is None:
+            seed = cls.generate_seed()
+
+        context = (
+            b"LUNAR-COINFLIP|"
+            + seed
+        )
+
+        key = cls.derive_key(
+            seed,
+            context,
+        )
+
+        value, _ = cls._random_u64(
+            key,
+            0,
+        )
+
+        result = (
+            "heads"
+            if value & 1
+            else "tails"
+        )
+
+        proof = hashlib.sha256(
+            cls.algorithm.encode(
+                "utf-8"
+            )
+            + b"|"
+            + seed
+            + b"|"
+            + result.encode(
+                "utf-8"
+            )
+        ).hexdigest()
+
+        return (
+            result,
+            proof,
+        )
 
 # ============================================================
 # RANDOMIZER COG

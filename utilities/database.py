@@ -1,4 +1,5 @@
 
+
 from __future__ import annotations
 
 import asyncio
@@ -1371,7 +1372,6 @@ class AccountLinkRepository(BaseRepository):
     ):
         #
         # This query intentionally isn't used as the primary lookup
-        # because ScyllaDB favors queries designed around partition keys.
         #
         # If this becomes common, create a dedicated
         # account_links_by_uuid table.
@@ -1944,4 +1944,818 @@ class AuditRepository(BaseRepository):
         self,
         guild_id: int | str,
         *,
-       
+        actor_id: Optional[int | str],
+        action: str,
+        target_id: Optional[int | str],
+        reason: Optional[str] = None,
+        metadata: Optional[
+            Mapping[str, str]
+        ] = None,
+    ):
+
+        now = utcnow()
+
+        await self.query(
+            """
+            INSERT INTO audit_logs (
+                guild_id,
+                event_date,
+                event_id,
+                actor_id,
+                action,
+                target_id,
+                reason,
+                metadata
+            )
+            VALUES (?, ?, now(), ?, ?, ?, ?, ?)
+            """,
+            (
+                str(guild_id),
+                now.date(),
+                str(actor_id)
+                if actor_id is not None
+                else None,
+                action,
+                str(target_id)
+                if target_id is not None
+                else None,
+                reason,
+                dict(metadata or {}),
+            ),
+        )
+
+
+# ============================================================
+# COUNTERS / STATS
+# ============================================================
+
+class StatsRepository(BaseRepository):
+
+    async def increment(
+        self,
+        stat_name: str,
+        amount: int = 1,
+    ):
+
+        await self.query(
+            """
+            UPDATE bot_counters
+            SET value = value + ?
+            WHERE stat_name = ?
+            """,
+            (
+                amount,
+                stat_name,
+            ),
+        )
+
+    async def get(
+        self,
+        stat_name: str,
+    ) -> int:
+
+        row = await self.one(
+            """
+            SELECT value
+            FROM bot_counters
+            WHERE stat_name = ?
+            """,
+            (
+                stat_name,
+            ),
+        )
+
+        if not row:
+            return 0
+
+        return int(
+            row.value or 0
+        )
+
+
+# ============================================================
+# GITHUB
+# ============================================================
+
+class GitHubRepository(BaseRepository):
+
+    async def register_repository(
+        self,
+        repository: str,
+        *,
+        url: str,
+        owner: str,
+        name: str,
+        branch: str,
+        channel_id: int | str,
+        enabled: bool = True,
+    ):
+
+        await self.query(
+            """
+            INSERT INTO github_repositories (
+                repository,
+                url,
+                owner,
+                name,
+                branch,
+                channel_id,
+                enabled,
+                last_commit_sha,
+                last_checked_at,
+                metadata
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                repository,
+                url,
+                owner,
+                name,
+                branch,
+                str(channel_id),
+                enabled,
+                None,
+                None,
+                {},
+            ),
+        )
+
+    async def get(
+        self,
+        repository: str,
+    ):
+
+        return await self.one(
+            """
+            SELECT *
+            FROM github_repositories
+            WHERE repository = ?
+            """,
+            (
+                repository,
+            ),
+        )
+
+    async def set_last_commit(
+        self,
+        repository: str,
+        sha: str,
+    ):
+
+        await self.query(
+            """
+            UPDATE github_repositories
+            SET
+                last_commit_sha = ?,
+                last_checked_at = ?
+            WHERE repository = ?
+            """,
+            (
+                sha,
+                utcnow(),
+                repository,
+            ),
+        )
+
+    async def record_commit(
+        self,
+        repository: str,
+        *,
+        committed_at: datetime,
+        sha: str,
+        author: str,
+        committer: str,
+        message: str,
+        branch: str,
+        verified: bool,
+        additions: int,
+        deletions: int,
+        changed_files: int,
+        html_url: str,
+        files: Sequence[str],
+        metadata: Optional[
+            Mapping[str, str]
+        ] = None,
+    ):
+
+        await self.query(
+            """
+            INSERT INTO github_commits (
+                repository,
+                committed_date,
+                committed_at,
+                sha,
+                author,
+                committer,
+                message,
+                branch,
+                verified,
+                additions,
+                deletions,
+                changed_files,
+                html_url,
+                files,
+                metadata
+            )
+            VALUES (
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?
+            )
+            """,
+            (
+                repository,
+                committed_at.date(),
+                committed_at,
+                sha,
+                author,
+                committer,
+                message,
+                branch,
+                verified,
+                additions,
+                deletions,
+                changed_files,
+                html_url,
+                list(files),
+                dict(metadata or {}),
+            ),
+        )
+
+    async def recent_commits(
+        self,
+        repository: str,
+        committed_date,
+        limit: int = 25,
+    ):
+
+        result = await self.query(
+            """
+            SELECT *
+            FROM github_commits
+            WHERE repository = ?
+            AND committed_date = ?
+            LIMIT ?
+            """,
+            (
+                repository,
+                committed_date,
+                limit,
+            ),
+        )
+
+        return result.all()
+
+
+# ============================================================
+# EXTENSION STORAGE
+# ============================================================
+
+class ExtensionRepository(BaseRepository):
+    """
+    Generic extension layer.
+
+    Useful while developing a feature before creating a dedicated
+    query-oriented table.
+
+    Namespace examples:
+
+        economy
+        gacha
+        aniList
+        library
+        moderation
+        tickets
+        requests
+        reminders
+    """
+
+    async def set(
+        self,
+        namespace: str,
+        entity_id: int | str,
+        key: str,
+        value: Any,
+        *,
+        expires_at: Optional[
+            datetime
+        ] = None,
+        metadata: Optional[
+            Mapping[str, str]
+        ] = None,
+    ):
+
+        await self.query(
+            """
+            INSERT INTO extension_data (
+                namespace,
+                entity_id,
+                key,
+                value,
+                updated_at,
+                expires_at,
+                metadata
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                namespace,
+                str(entity_id),
+                key,
+                json_dumps(value),
+                utcnow(),
+                expires_at,
+                dict(metadata or {}),
+            ),
+        )
+
+    async def get(
+        self,
+        namespace: str,
+        entity_id: int | str,
+        key: str,
+        default: Any = None,
+    ):
+
+        row = await self.one(
+            """
+            SELECT value
+            FROM extension_data
+            WHERE namespace = ?
+            AND entity_id = ?
+            AND key = ?
+            """,
+            (
+                namespace,
+                str(entity_id),
+                key,
+            ),
+        )
+
+        if not row:
+            return default
+
+        return json_loads(
+            row.value,
+            default,
+        )
+
+
+# ============================================================
+# CSV MIGRATION
+# ============================================================
+
+class CSVImporter:
+
+    def __init__(
+        self,
+        database: ScyllaDatabase,
+    ):
+        self.db = database
+
+    # ========================================================
+    # USERS CSV
+    # ========================================================
+
+    async def import_users(
+        self,
+        rows: Iterable[
+            Mapping[str, str]
+        ],
+    ) -> int:
+
+        imported = 0
+
+        if self.db.users is None:
+            raise RuntimeError(
+                "Database is not initialized."
+            )
+
+        for row in rows:
+
+            snowflake_id = (
+                row.get("snowflakeid")
+            )
+
+            if not snowflake_id:
+                continue
+
+            def integer(
+                key: str,
+                default: int = 0,
+            ) -> int:
+
+                raw = row.get(key)
+
+                if raw in (
+                    None,
+                    "",
+                ):
+                    return default
+
+                try:
+                    return int(raw)
+
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    return default
+
+            await self.db.users.update(
+                snowflake_id,
+
+                level=integer(
+                    "level",
+                    1,
+                ),
+
+                required_xp=integer(
+                    "required_xp",
+                    100,
+                ),
+
+                shame_points=integer(
+                    "shame_points",
+                    0,
+                ),
+
+                # Current CSV may contain blank values.
+                #
+                # Start those users at 0 XP.
+
+                metadata={
+                    "migration": "users_lunar.csv"
+                },
+            )
+
+            # If the row didn't already exist, create it.
+
+            if not await self.db.users.exists(
+                snowflake_id
+            ):
+
+                await self.db.users.create(
+                    snowflake_id,
+
+                    level=integer(
+                        "level",
+                        1,
+                    ),
+
+                    required_xp=integer(
+                        "required_xp",
+                        100,
+                    ),
+
+                    xp=integer(
+                        "xp",
+                        0,
+                    ),
+
+                    shame_points=integer(
+                        "shame_points",
+                        0,
+                    ),
+                )
+
+            imported += 1
+
+        return imported
+
+    # ========================================================
+    # ACCOUNT LINK CSV
+    # ========================================================
+
+    async def import_account_links(
+        self,
+        rows: Iterable[
+            Mapping[str, str]
+        ],
+    ) -> int:
+
+        imported = 0
+
+        if self.db.account_links is None:
+            raise RuntimeError(
+                "Database is not initialized."
+            )
+
+        for row in rows:
+
+            snowflake_id = (
+                row.get("snowflakeid")
+            )
+
+            lunar_uuid = (
+                row.get("lunaruuid")
+            )
+
+            verification_code = (
+                row.get(
+                    "verification_code"
+                )
+            )
+
+            if not all(
+                (
+                    snowflake_id,
+                    lunar_uuid,
+                    verification_code,
+                )
+            ):
+                continue
+
+            raw_verified = str(
+                row.get(
+                    "verified",
+                    "False",
+                )
+            ).lower()
+
+            verified = (
+                raw_verified
+                == "true"
+            )
+
+            last_message_time = None
+
+            raw_time = row.get(
+                "last_message_time"
+            )
+
+            if raw_time:
+
+                try:
+
+                    last_message_time = (
+                        datetime.strptime(
+                            raw_time,
+                            "%Y-%m-%d %H:%M:%S.%f%z",
+                        )
+                    )
+
+                except ValueError:
+
+                    try:
+
+                        last_message_time = (
+                            datetime.fromisoformat(
+                                raw_time
+                            )
+                        )
+
+                    except ValueError:
+
+                        log.warning(
+                            "Could not parse "
+                            "last_message_time "
+                            "for %s",
+                            snowflake_id,
+                        )
+
+            await self.db.account_links.link(
+                snowflake_id,
+                lunar_uuid,
+                verification_code,
+                verified=verified,
+                last_message_time=(
+                    last_message_time
+                ),
+            )
+
+            imported += 1
+
+        return imported
+
+
+# ============================================================
+# GLOBAL DATABASE
+# ============================================================
+
+db = ScyllaDatabase(
+    SCYLLA_CONFIG
+)
+
+
+# ============================================================
+# STARTUP HELPERS
+# ============================================================
+
+async def initialize_database():
+    await db.initialize()
+
+    return db
+
+
+async def close_database():
+    await db.close()
+
+
+# ============================================================
+# OPTIONAL CSV CONVENIENCE
+# ============================================================
+
+async def import_csv_data(
+    users_rows: Optional[
+        Iterable[Mapping[str, str]]
+    ] = None,
+    account_rows: Optional[
+        Iterable[Mapping[str, str]]
+    ] = None,
+):
+
+    importer = CSVImporter(
+        db
+    )
+
+    users_count = 0
+    account_count = 0
+
+    if users_rows is not None:
+
+        users_count = (
+            await importer.import_users(
+                users_rows
+            )
+        )
+
+    if account_rows is not None:
+
+        account_count = (
+            await importer.import_account_links(
+                account_rows
+            )
+        )
+
+    return {
+        "users": users_count,
+        "account_links": account_count,
+    }
+
+
+# ============================================================
+# EXTENSION AREA
+# ============================================================
+#
+# When adding a NEW large system, create a repository.
+#
+# Example:
+#
+# class EconomyRepository(BaseRepository):
+#
+#     async def get_balance(
+#         self,
+#         user_id: int | str,
+#     ):
+#         ...
+#
+#     async def add_coins(
+#         self,
+#         user_id: int | str,
+#         amount: int,
+#     ):
+#         ...
+#
+#
+# Then:
+#
+# 1. Add the table to CORE_SCHEMA.
+#
+# 2. Add the repository attribute inside
+#    ScyllaDatabase.__init__().
+#
+# 3. Bind it inside _bind_repositories().
+#
+#
+# ============================================================
+# POSSIBLE FUTURE MODULES
+# ============================================================
+#
+# Economy
+# -------
+# balances
+# transactions
+# daily rewards
+# shops
+# purchases
+# trading
+#
+# Gacha
+# -----
+# cards
+# owned cards
+# pulls
+# banners
+# pity
+# inventory
+# teams
+# battle history
+#
+# Library
+# -------
+# manga
+# manhwa
+# manhua
+# novels
+# reading progress
+# bookmarks
+# favorites
+# history
+#
+# AniList
+# -------
+# accounts
+# cached titles
+# sync state
+# activity
+# notifications
+#
+# Moderation
+# ----------
+# warnings
+# punishments
+# mutes
+# bans
+# kicks
+# appeals
+# moderator actions
+#
+# Requests
+# --------
+# manga requests
+# novel requests
+# approvals
+# denials
+# request history
+#
+# Tickets
+# -------
+# ticket metadata
+# messages
+# staff actions
+# closures
+#
+# Reminders
+# ---------
+# scheduled events
+# recurring events
+# delivery state
+#
+# Achievements
+# ------------
+# definitions
+# user progress
+# unlock history
+#
+# Leaderboards
+# ------------
+# XP
+# coins
+# chapters
+# anime
+# messages
+# gacha
+#
+# GitHub
+# ------
+# repositories
+# commits
+# releases
+# issues
+# pull requests
+# deployment history
+#
+# ============================================================
+# IMPORTANT SCYLLA MODELING RULE
+# ============================================================
+#
+# DO NOT create random secondary indexes every time you need
+# another lookup.
+#
+# For every important access pattern, prefer a dedicated table.
+#
+# Example:
+#
+# You need:
+#
+#     Find account by Lunar UUID
+#
+# Instead of:
+#
+#     SELECT ... WHERE lunar_uuid = ?
+#
+# create:
+#
+#     account_links_by_uuid
+#
+# with:
+#
+#     lunar_uuid text PRIMARY KEY
+#     snowflake_id text
+#     ...
+#
+# This keeps the schema query-oriented and scalable.
+#
+# ============================================================

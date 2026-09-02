@@ -595,6 +595,68 @@ CREATE TABLE IF NOT EXISTS mentions_by_user (
 ) WITH CLUSTERING ORDER BY (created_at DESC, id DESC)
 """,
 
+
+# ============================================================
+# GIVEAWAY
+# ============================================================
+
+    """
+    CREATE TABLE IF NOT EXISTS giveaways (
+        giveaway_id text PRIMARY KEY,
+
+        message_id text,
+        channel_id text,
+        guild_id text,
+
+        host_id text,
+
+        duration_seconds bigint,
+
+        prize text,
+        description text,
+
+        winners_count int,
+
+        participant_ids set<text>,
+        winner_ids set<text>,
+
+        state text,
+
+        created_at timestamp,
+        ends_at timestamp,
+        ended_at timestamp,
+
+        metadata map<text, text>
+    )
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS giveaways_by_message (
+        message_id text PRIMARY KEY,
+        giveaway_id text
+    )
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS giveaways_active (
+        bucket text,
+        ends_at timestamp,
+        giveaway_id text,
+
+        PRIMARY KEY (
+            bucket,
+            ends_at,
+            giveaway_id
+        )
+    )
+    WITH CLUSTERING ORDER BY (
+        ends_at ASC
+    )
+    """,
+
+
+
+
 # ============================================================
 # DATABASE ENGINE
 # ============================================================
@@ -856,7 +918,7 @@ class ScyllaDatabase:
         self.account_links = (
             AccountLinkRepository(self)
         )
-
+        self.giveaways = GiveawayRepository(self)
         self.xp = XPRepository(self)
 
         self.shame = ShameRepository(self)
@@ -2834,7 +2896,367 @@ class VariableRepository(BaseRepository):
 
         return int(row.int_value)
 
+
+
 # ============================================================
+# GIVEAWAY REPOSITORY
+# ============================================================
+
+class GiveawayRepository(BaseRepository):
+
+    async def create(
+        self,
+        *,
+        giveaway_id: str,
+        message_id: int | str,
+        channel_id: int | str,
+        guild_id: int | str,
+        host_id: int | str,
+        duration_seconds: int,
+        prize: str,
+        description: str,
+        winners_count: int,
+        created_at,
+        ends_at,
+    ):
+
+        await self.query(
+            """
+            INSERT INTO giveaways (
+                giveaway_id,
+                message_id,
+                channel_id,
+                guild_id,
+                host_id,
+                duration_seconds,
+                prize,
+                description,
+                winners_count,
+                participant_ids,
+                winner_ids,
+                state,
+                created_at,
+                ends_at,
+                ended_at,
+                metadata
+            )
+            VALUES (
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?
+            )
+            """,
+            (
+                giveaway_id,
+                str(message_id),
+                str(channel_id),
+                str(guild_id),
+                str(host_id),
+                duration_seconds,
+                prize,
+                description,
+                winners_count,
+                set(),
+                set(),
+                "active",
+                created_at,
+                ends_at,
+                None,
+                {},
+            ),
+        )
+
+        bucket = ends_at.strftime("%Y%m%d%H")
+
+        await self.query(
+            """
+            INSERT INTO giveaways_active (
+                bucket,
+                ends_at,
+                giveaway_id
+            )
+            VALUES (?, ?, ?)
+            """,
+            (
+                bucket,
+                ends_at,
+                giveaway_id,
+            ),
+        )
+
+        await self.query(
+            """
+            INSERT INTO giveaways_by_message (
+                message_id,
+                giveaway_id
+            )
+            VALUES (?, ?)
+            """,
+            (
+                str(message_id),
+                giveaway_id,
+            ),
+        )
+
+    async def get(
+        self,
+        giveaway_id: str,
+    ):
+
+        return await self.one(
+            """
+            SELECT *
+            FROM giveaways
+            WHERE giveaway_id = ?
+            """,
+            (
+                giveaway_id,
+            ),
+        )
+
+    async def get_by_message(
+        self,
+        message_id: int | str,
+    ):
+
+        mapping = await self.one(
+            """
+            SELECT giveaway_id
+            FROM giveaways_by_message
+            WHERE message_id = ?
+            """,
+            (
+                str(message_id),
+            ),
+        )
+
+        if not mapping:
+            return None
+
+        return await self.get(
+            mapping.giveaway_id
+        )
+
+    async def add_entry(
+        self,
+        giveaway_id: str,
+        user_id: int | str,
+    ):
+
+        await self.query(
+            """
+            UPDATE giveaways
+            SET participant_ids = participant_ids + ?
+            WHERE giveaway_id = ?
+            """,
+            (
+                {str(user_id)},
+                giveaway_id,
+            ),
+        )
+
+    async def remove_entry(
+        self,
+        giveaway_id: str,
+        user_id: int | str,
+    ):
+
+        await self.query(
+            """
+            UPDATE giveaways
+            SET participant_ids = participant_ids - ?
+            WHERE giveaway_id = ?
+            """,
+            (
+                {str(user_id)},
+                giveaway_id,
+            ),
+        )
+
+    async def set_winners(
+        self,
+        giveaway_id: str,
+        winners: set[str],
+    ):
+
+        await self.query(
+            """
+            UPDATE giveaways
+            SET winner_ids = winner_ids + ?
+            WHERE giveaway_id = ?
+            """,
+            (
+                winners,
+                giveaway_id,
+            ),
+        )
+
+    async def end(
+        self,
+        giveaway_id: str,
+        *,
+        winners: set[str],
+        ended_at,
+    ):
+
+        giveaway = await self.get(
+            giveaway_id
+        )
+
+        if not giveaway:
+            return None
+
+        await self.query(
+            """
+            UPDATE giveaways
+            SET
+                state = ?,
+                winner_ids = winner_ids + ?,
+                ended_at = ?
+            WHERE giveaway_id = ?
+            """,
+            (
+                "ended",
+                winners,
+                ended_at,
+                giveaway_id,
+            ),
+        )
+
+        bucket = giveaway.ends_at.strftime("%Y%m%d%H")
+
+        await self.query(
+            """
+            DELETE FROM giveaways_active
+            WHERE bucket = ?
+            AND ends_at = ?
+            AND giveaway_id = ?
+            """,
+            (
+                bucket,
+                giveaway.ends_at,
+                giveaway_id,
+            ),
+        )
+
+        return await self.get(
+            giveaway_id
+        )
+
+    async def delete(
+        self,
+        giveaway_id: str,
+    ):
+
+        giveaway = await self.get(
+            giveaway_id
+        )
+
+        if not giveaway:
+            return None
+
+        await self.query(
+            """
+            DELETE FROM giveaways
+            WHERE giveaway_id = ?
+            """,
+            (
+                giveaway_id,
+            ),
+        )
+
+        await self.query(
+            """
+            DELETE FROM giveaways_by_message
+            WHERE message_id = ?
+            """,
+            (
+                giveaway.message_id,
+            ),
+        )
+
+        if giveaway.state == "active":
+
+            bucket = giveaway.ends_at.strftime(
+                "%Y%m%d%H"
+            )
+
+            await self.query(
+                """
+                DELETE FROM giveaways_active
+                WHERE bucket = ?
+                AND ends_at = ?
+                AND giveaway_id = ?
+                """,
+                (
+                    bucket,
+                    giveaway.ends_at,
+                    giveaway_id,
+                ),
+            )
+
+        return giveaway
+
+    async def due(
+        self,
+        *,
+        now,
+        limit: int = 50,
+    ):
+
+        buckets = {
+            now.strftime("%Y%m%d%H"),
+        }
+
+        previous_hour = now.timestamp() - 3600
+        previous = datetime.fromtimestamp(
+            previous_hour,
+            timezone.utc,
+        )
+
+        buckets.add(
+            previous.strftime("%Y%m%d%H")
+        )
+
+        rows = []
+
+        for bucket in buckets:
+
+            result = await self.query(
+                """
+                SELECT giveaway_id
+                FROM giveaways_active
+                WHERE bucket = ?
+                AND ends_at <= ?
+                LIMIT ?
+                """,
+                (
+                    bucket,
+                    now,
+                    limit,
+                ),
+            )
+
+            rows.extend(
+                result.all()
+            )
+
+        giveaways = []
+
+        for row in rows:
+
+            giveaway = await self.get(
+                row.giveaway_id
+            )
+
+            if giveaway:
+                giveaways.append(
+                    giveaway
+                )
+
+        return giveaways
+
+
 # ============================================================
 # CSV MIGRATION
 # ============================================================

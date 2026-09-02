@@ -1,26 +1,25 @@
-import asyncio
-import time
+from __future__ import annotations
 
+import asyncio
 import aiohttp
+
 import discord
+
 from discord import app_commands
 from discord.ext import commands
 
 from utilities.database import db
 from cogs.utilities.emoji import EMOJI
-
-
-# ============================================================
-# BOT INFORMATION
-# ============================================================
-
-BOT_NAME = "Lunaranime Bot"
-BOT_VERSION = "3.0.0"
-
-DEVELOPERS = (
-    "Vireon",
-    "Thanon",
+from cogs.utilities.info import (
+    BOT,
+    get_developers,
+    get_uptime,
 )
+
+
+# ============================================================
+# CONFIG
+# ============================================================
 
 LUNAR_WEBSITE = "https://lunarx.to"
 LUNAR_API = "https://api.lunarx.to"
@@ -32,89 +31,32 @@ HTTP_TIMEOUT = aiohttp.ClientTimeout(
     sock_read=5,
 )
 
-STARTED_AT = time.time()
-
 
 # ============================================================
-# HELPERS
+# STATUS
 # ============================================================
 
-def get_uptime() -> str:
-
-    elapsed = int(
-        time.time() - STARTED_AT
-    )
-
-    days, remainder = divmod(
-        elapsed,
-        86400,
-    )
-
-    hours, remainder = divmod(
-        remainder,
-        3600,
-    )
-
-    minutes, seconds = divmod(
-        remainder,
-        60,
-    )
-
-    parts = []
-
-    if days:
-        parts.append(f"{days}d")
-
-    if hours:
-        parts.append(f"{hours}h")
-
-    if minutes:
-        parts.append(f"{minutes}m")
-
-    if seconds or not parts:
-        parts.append(f"{seconds}s")
-
-    return " ".join(parts)
-
-
-def get_developers() -> str:
-    return "\n".join(
-        f"{EMOJI['dev']} `{developer}`"
-        for developer in DEVELOPERS
-    )
-
-
-def get_registered_command_count(
-    bot: commands.Bot,
-) -> int:
-
-    return sum(
-        1
-        for command in bot.tree.walk_commands()
-    )
-
-
-async def fetch_endpoint_status(
+async def fetch_status(
     session: aiohttp.ClientSession,
     url: str,
 ) -> tuple[int | None, float | None]:
 
-    started = time.perf_counter()
+    started = asyncio.get_running_loop().time()
 
     try:
-
         async with session.get(
             url,
             allow_redirects=True,
         ) as response:
 
-            latency = (
-                time.perf_counter() - started
+            elapsed = (
+                asyncio.get_running_loop().time()
+                - started
             ) * 1000
 
             return (
                 response.status,
-                round(latency, 2),
+                round(elapsed, 2),
             )
 
     except Exception:
@@ -125,18 +67,18 @@ async def fetch_endpoint_status(
         )
 
 
-async def fetch_lunar_status() -> dict[str, object]:
+async def get_lunar_status() -> dict[str, object]:
 
     async with aiohttp.ClientSession(
         timeout=HTTP_TIMEOUT
     ) as session:
 
-        website_task = fetch_endpoint_status(
+        website_task = fetch_status(
             session,
             LUNAR_WEBSITE,
         )
 
-        api_task = fetch_endpoint_status(
+        api_task = fetch_status(
             session,
             LUNAR_API,
         )
@@ -149,13 +91,12 @@ async def fetch_lunar_status() -> dict[str, object]:
     return {
         "website_status": website[0],
         "website_latency": website[1],
-
         "api_status": api[0],
         "api_latency": api[1],
     }
 
 
-def format_service(
+def format_status(
     status: int | None,
     latency: float | None,
 ) -> str:
@@ -193,7 +134,7 @@ def format_service(
 
 
 # ============================================================
-# ABOUT COG
+# ABOUT
 # ============================================================
 
 class About(commands.Cog):
@@ -218,7 +159,7 @@ class About(commands.Cog):
     ):
 
         # ----------------------------------------------------
-        # FAKE LOADING
+        # LOADING
         # ----------------------------------------------------
 
         await interaction.response.send_message(
@@ -229,7 +170,20 @@ class About(commands.Cog):
         await asyncio.sleep(1)
 
         # ----------------------------------------------------
-        # BASIC BOT STATS
+        # BOT INFORMATION
+        # ----------------------------------------------------
+
+        bot_name = BOT["name"]
+        bot_version = BOT["version"]
+
+        developers = get_developers(
+            "discord"
+        )
+
+        uptime = get_uptime()
+
+        # ----------------------------------------------------
+        # DISCORD STATISTICS
         # ----------------------------------------------------
 
         guild_count = len(
@@ -246,15 +200,18 @@ class About(commands.Cog):
             for guild in self.bot.guilds
         )
 
-        command_count = get_registered_command_count(
-            self.bot
+        loaded_cogs = len(
+            self.bot.cogs
+        )
+
+        registered_commands = sum(
+            1
+            for _ in self.bot.tree.walk_commands()
         )
 
         gateway_latency = round(
             self.bot.latency * 1000
         )
-
-        uptime = get_uptime()
 
         # ----------------------------------------------------
         # COMMAND USAGE
@@ -277,7 +234,7 @@ class About(commands.Cog):
         try:
 
             lunar_status = (
-                await fetch_lunar_status()
+                await get_lunar_status()
             )
 
         except Exception:
@@ -309,40 +266,28 @@ class About(commands.Cog):
         # OVERALL STATUS
         # ----------------------------------------------------
 
-        services_online = (
+        systems_online = (
             website_status == 200
             and api_status == 200
         )
 
         # ----------------------------------------------------
-        # CURRENT WATCHING STATUS
+        # CURRENT PRESENCE
         # ----------------------------------------------------
 
-        watching_status = "Unknown"
+        current_presence = "Unknown"
 
         if self.bot.activity is not None:
 
-            if isinstance(
-                self.bot.activity,
-                discord.Activity,
+            if (
+                self.bot.activity.type
+                == discord.ActivityType.watching
             ):
 
-                if self.bot.activity.type == (
-                    discord.ActivityType.watching
-                ):
-
-                    watching_status = (
-                        self.bot.activity.name
-                        or "Unknown"
-                    )
-
-        # ----------------------------------------------------
-        # LOADED COGS
-        # ----------------------------------------------------
-
-        loaded_cog_count = len(
-            self.bot.cogs
-        )
+                current_presence = (
+                    self.bot.activity.name
+                    or "Unknown"
+                )
 
         # ----------------------------------------------------
         # EMBED
@@ -351,16 +296,16 @@ class About(commands.Cog):
         embed = discord.Embed(
             title=(
                 f"{EMOJI['lunar']} "
-                f"{BOT_NAME}"
+                f"{bot_name}"
             ),
             description=(
                 f"{EMOJI['moon']} "
-                "Lunar's central Discord infrastructure "
-                "and service information."
+                "Lunar's Discord infrastructure, "
+                "statistics and service status."
             ),
             color=(
                 discord.Color.green()
-                if services_online
+                if systems_online
                 else discord.Color.red()
             ),
             timestamp=discord.utils.utcnow(),
@@ -373,16 +318,16 @@ class About(commands.Cog):
         embed.add_field(
             name=f"{EMOJI['lunar']} Information",
             value=(
-                f"**Version:** `{BOT_VERSION}`\n"
+                f"**Version:** `{bot_version}`\n"
                 f"**Uptime:** `{uptime}`\n"
                 f"**Developers:**\n"
-                f"{get_developers()}"
+                f"{developers}"
             ),
             inline=False,
         )
 
         # ----------------------------------------------------
-        # DISCORD STATISTICS
+        # DISCORD
         # ----------------------------------------------------
 
         embed.add_field(
@@ -391,19 +336,20 @@ class About(commands.Cog):
                 f"**Servers:** `{guild_count:,}`\n"
                 f"**Users:** `{user_count:,}`\n"
                 f"**Channels:** `{channel_count:,}`\n"
-                f"**Loaded Cogs:** `{loaded_cog_count}`"
+                f"**Loaded Cogs:** `{loaded_cogs}`"
             ),
             inline=True,
         )
 
         # ----------------------------------------------------
-        # COMMAND STATISTICS
+        # COMMANDS
         # ----------------------------------------------------
 
         embed.add_field(
             name=f"{EMOJI['dev']} Commands",
             value=(
-                f"**Registered:** `{command_count:,}`\n"
+                f"**Registered:** "
+                f"`{registered_commands:,}`\n"
                 f"**Total Used:** "
                 f"`{total_commands_used:,}`"
             ),
@@ -417,7 +363,8 @@ class About(commands.Cog):
         embed.add_field(
             name=f"{EMOJI['loading']} Latency",
             value=(
-                f"**Discord:** `{gateway_latency}ms`"
+                f"**Discord:** "
+                f"`{gateway_latency}ms`"
             ),
             inline=True,
         )
@@ -428,7 +375,7 @@ class About(commands.Cog):
 
         embed.add_field(
             name=f"{EMOJI['lunar']} Website",
-            value=format_service(
+            value=format_status(
                 website_status,
                 website_latency,
             ),
@@ -437,11 +384,11 @@ class About(commands.Cog):
 
         # ----------------------------------------------------
         # API
-        # --------------------------------------------------------
+        # ----------------------------------------------------
 
         embed.add_field(
             name=f"{EMOJI['dev']} API",
-            value=format_service(
+            value=format_status(
                 api_status,
                 api_latency,
             ),
@@ -449,13 +396,13 @@ class About(commands.Cog):
         )
 
         # ----------------------------------------------------
-        # WATCHING STATUS
+        # PRESENCE
         # ----------------------------------------------------
 
         embed.add_field(
             name=f"{EMOJI['moon']} Current Presence",
             value=(
-                f"Watching `{watching_status}`"
+                f"Watching `{current_presence}`"
             ),
             inline=True,
         )
@@ -472,7 +419,7 @@ class About(commands.Cog):
         )
 
         # ----------------------------------------------------
-        # SEND
+        # RESPONSE
         # ----------------------------------------------------
 
         await interaction.edit_original_response(
@@ -488,6 +435,7 @@ class About(commands.Cog):
 async def setup(
     bot: commands.Bot,
 ):
+
     await bot.add_cog(
         About(bot)
     )

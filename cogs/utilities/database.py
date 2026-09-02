@@ -1520,6 +1520,10 @@ class UserRepository(BaseRepository):
 
 class AccountLinkRepository(BaseRepository):
 
+    # --------------------------------------------------------
+    # GET BY DISCORD ID
+    # --------------------------------------------------------
+
     async def get(
         self,
         snowflake_id: int | str,
@@ -1536,16 +1540,18 @@ class AccountLinkRepository(BaseRepository):
             ),
         )
 
+    # --------------------------------------------------------
+    # GET BY LUNAR UUID
+    # --------------------------------------------------------
+
     async def get_by_lunar_uuid(
         self,
         lunar_uuid: str | uuid.UUID,
     ):
-        #
-        # Backed by the dedicated `account_links_by_uuid` table,
-        # kept in sync by link() / set_verified() below, per the
-        # modeling rule at the bottom of this file: prefer a
-        # query-oriented table over a secondary index.
-        #
+
+        parsed_uuid = uuid.UUID(
+            str(lunar_uuid)
+        )
 
         return await self.one(
             """
@@ -1554,9 +1560,76 @@ class AccountLinkRepository(BaseRepository):
             WHERE lunar_uuid = ?
             """,
             (
-                uuid.UUID(str(lunar_uuid)),
+                parsed_uuid,
             ),
         )
+
+    # --------------------------------------------------------
+    # GET BY LUNAR USERNAME
+    # --------------------------------------------------------
+    #
+    # Username is intentionally stored in metadata because
+    # account_links already uses a flexible metadata map.
+    #
+    # Do NOT query:
+    #
+    #     WHERE metadata['username'] = ?
+    #
+    # as a normal access pattern in Scylla.
+    #
+    # This helper is therefore mainly a convenience fallback
+    # for low-frequency operations. The primary lookup should
+    # always be Discord ID -> account row.
+    #
+    # --------------------------------------------------------
+
+    async def get_username(
+        self,
+        snowflake_id: int | str,
+    ) -> str | None:
+
+        account = await self.get(
+            snowflake_id
+        )
+
+        if not account:
+            return None
+
+        metadata = (
+            getattr(
+                account,
+                "metadata",
+                None,
+            )
+            or {}
+        )
+
+        username = (
+            metadata.get(
+                "username"
+            )
+            or metadata.get(
+                "lunar_username"
+            )
+        )
+
+        if not isinstance(
+            username,
+            str,
+        ):
+            return None
+
+        username = username.strip()
+
+        return (
+            username
+            if username
+            else None
+        )
+
+    # --------------------------------------------------------
+    # LINK
+    # --------------------------------------------------------
 
     async def link(
         self,
@@ -1568,77 +1641,257 @@ class AccountLinkRepository(BaseRepository):
         last_message_time: Optional[
             datetime
         ] = None,
+        metadata: Optional[
+            Mapping[str, str]
+        ] = None,
     ):
 
-        now = utcnow()
+        discord_id = str(
+            snowflake_id
+        )
 
         parsed_uuid = uuid.UUID(
             str(lunar_uuid)
         )
 
-        verified_at = (
-            now if verified else None
+        now = utcnow()
+
+        # ----------------------------------------------------
+        # NORMALIZE METADATA
+        # ----------------------------------------------------
+
+        normalized_metadata = {
+            str(key): str(value)
+            for key, value in (
+                metadata or {}
+            ).items()
+            if value is not None
+        }
+        existing = await self.get(
+            discord_id
         )
 
+        if existing:
+
+            existing_metadata = dict(
+                getattr(
+                    existing,
+                    "metadata",
+                    None,
+                )
+                or {}
+            )
+
+            existing_metadata.update(
+                normalized_metadata
+            )
+
+            normalized_metadata = (
+                existing_metadata
+            )
+
+        verified_at = (
+            now
+            if verified
+            else (
+                getattr(
+                    existing,
+                    "verified_at",
+                    None,
+                )
+                if existing
+                else None
+            )
+        )
+
+        created_at = (
+            getattr(
+                existing,
+                "created_at",
+                None,
+            )
+            if existing
+            else None
+        )
+
+        if created_at is None:
+            created_at = now
+
+        queries = [
+            (
+                """
+                INSERT INTO account_links (
+                    snowflake_id,
+                    lunar_uuid,
+                    verification_code,
+                    verified,
+                    last_message_time,
+                    verified_at,
+                    created_at,
+                    updated_at,
+                    metadata
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    discord_id,
+                    parsed_uuid,
+                    verification_code,
+                    verified,
+                    last_message_time,
+                    verified_at,
+                    created_at,
+                    now,
+                    normalized_metadata,
+                ),
+            ),
+            (
+                """
+                INSERT INTO account_links_by_uuid (
+                    lunar_uuid,
+                    snowflake_id,
+                    verification_code,
+                    verified,
+                    last_message_time,
+                    verified_at,
+                    created_at,
+                    updated_at,
+                    metadata
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    parsed_uuid,
+                    discord_id,
+                    verification_code,
+                    verified,
+                    last_message_time,
+                    verified_at,
+                    created_at,
+                    now,
+                    normalized_metadata,
+                ),
+            ),
+        ]
+
         await self.db.batch(
-            [
-                (
-                    """
-                    INSERT INTO account_links (
-                        snowflake_id,
-                        lunar_uuid,
-                        verification_code,
-                        verified,
-                        last_message_time,
-                        verified_at,
-                        created_at,
-                        updated_at,
-                        metadata
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        str(snowflake_id),
-                        parsed_uuid,
-                        verification_code,
-                        verified,
-                        last_message_time,
-                        verified_at,
-                        now,
-                        now,
-                        {},
-                    ),
-                ),
-                (
-                    """
-                    INSERT INTO account_links_by_uuid (
-                        lunar_uuid,
-                        snowflake_id,
-                        verification_code,
-                        verified,
-                        last_message_time,
-                        verified_at,
-                        created_at,
-                        updated_at,
-                        metadata
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        parsed_uuid,
-                        str(snowflake_id),
-                        verification_code,
-                        verified,
-                        last_message_time,
-                        verified_at,
-                        now,
-                        now,
-                        {},
-                    ),
-                ),
-            ],
+            queries,
             logged=True,
         )
+
+        return await self.get(
+            discord_id
+        )
+
+    # --------------------------------------------------------
+    # UPDATE METADATA
+    # --------------------------------------------------------
+
+    async def update_metadata(
+        self,
+        snowflake_id: int | str,
+        metadata: Mapping[str, str],
+    ):
+
+        discord_id = str(
+            snowflake_id
+        )
+
+        existing = await self.get(
+            discord_id
+        )
+
+        if not existing:
+            return None
+
+        existing_metadata = dict(
+            getattr(
+                existing,
+                "metadata",
+                None,
+            )
+            or {}
+        )
+
+        existing_metadata.update(
+            {
+                str(key): str(value)
+                for key, value in metadata.items()
+                if value is not None
+            }
+        )
+
+        now = utcnow()
+
+        await self.query(
+            """
+            UPDATE account_links
+            SET
+                metadata = ?,
+                updated_at = ?
+            WHERE snowflake_id = ?
+            """,
+            (
+                existing_metadata,
+                now,
+                discord_id,
+            ),
+        )
+
+        lunar_uuid = getattr(
+            existing,
+            "lunar_uuid",
+            None,
+        )
+
+        if lunar_uuid:
+
+            await self.query(
+                """
+                UPDATE account_links_by_uuid
+                SET
+                    metadata = ?,
+                    updated_at = ?
+                WHERE lunar_uuid = ?
+                """,
+                (
+                    existing_metadata,
+                    now,
+                    lunar_uuid,
+                ),
+            )
+
+        return await self.get(
+            discord_id
+        )
+
+    # --------------------------------------------------------
+    # SET USERNAME
+    # --------------------------------------------------------
+
+    async def set_username(
+        self,
+        snowflake_id: int | str,
+        username: str,
+    ):
+
+        username = username.strip()
+
+        if not username:
+            raise ValueError(
+                "Lunar username cannot be empty."
+            )
+
+        return await self.update_metadata(
+            snowflake_id,
+            {
+                "username": username,
+            },
+        )
+
+    # --------------------------------------------------------
+    # SET VERIFIED
+    # --------------------------------------------------------
 
     async def set_verified(
         self,
@@ -1646,15 +1899,28 @@ class AccountLinkRepository(BaseRepository):
         verified: bool,
     ):
 
-        now = utcnow()
-
-        verified_at = (
-            now if verified else None
+        discord_id = str(
+            snowflake_id
         )
 
         existing = await self.get(
-            snowflake_id
+            discord_id
         )
+
+        if not existing:
+            return None
+
+        now = utcnow()
+
+        verified_at = (
+            now
+            if verified
+            else None
+        )
+
+        # ----------------------------------------------------
+        # MAIN TABLE
+        # ----------------------------------------------------
 
         await self.query(
             """
@@ -1669,16 +1935,21 @@ class AccountLinkRepository(BaseRepository):
                 verified,
                 verified_at,
                 now,
-                str(snowflake_id),
+                discord_id,
             ),
         )
 
-        # Keep the uuid-keyed lookup table in sync.
-        #
-        # We need the lunar_uuid to update the by-uuid row, so we
-        # read it back from the primary table first.
+        # ----------------------------------------------------
+        # UUID LOOKUP TABLE
+        # ----------------------------------------------------
 
-        if existing and existing.lunar_uuid:
+        lunar_uuid = getattr(
+            existing,
+            "lunar_uuid",
+            None,
+        )
+
+        if lunar_uuid:
 
             await self.query(
                 """
@@ -1693,10 +1964,298 @@ class AccountLinkRepository(BaseRepository):
                     verified,
                     verified_at,
                     now,
-                    existing.lunar_uuid,
+                    lunar_uuid,
                 ),
             )
 
+        return await self.get(
+            discord_id
+        )
+
+    # --------------------------------------------------------
+    # SET VERIFICATION CODE
+    # --------------------------------------------------------
+
+    async def set_verification_code(
+        self,
+        snowflake_id: int | str,
+        verification_code: str,
+    ):
+
+        discord_id = str(
+            snowflake_id
+        )
+
+        existing = await self.get(
+            discord_id
+        )
+
+        if not existing:
+            return None
+
+        now = utcnow()
+
+        await self.query(
+            """
+            UPDATE account_links
+            SET
+                verification_code = ?,
+                updated_at = ?
+            WHERE snowflake_id = ?
+            """,
+            (
+                verification_code,
+                now,
+                discord_id,
+            ),
+        )
+
+        lunar_uuid = getattr(
+            existing,
+            "lunar_uuid",
+            None,
+        )
+
+        if lunar_uuid:
+
+            await self.query(
+                """
+                UPDATE account_links_by_uuid
+                SET
+                    verification_code = ?,
+                    updated_at = ?
+                WHERE lunar_uuid = ?
+                """,
+                (
+                    verification_code,
+                    now,
+                    lunar_uuid,
+                ),
+            )
+
+        return await self.get(
+            discord_id
+        )
+
+    # --------------------------------------------------------
+    # SET LAST MESSAGE TIME
+    # --------------------------------------------------------
+
+    async def set_last_message_time(
+        self,
+        snowflake_id: int | str,
+        last_message_time: Optional[
+            datetime
+        ] = None,
+    ):
+
+        discord_id = str(
+            snowflake_id
+        )
+
+        existing = await self.get(
+            discord_id
+        )
+
+        if not existing:
+            return None
+
+        timestamp = (
+            last_message_time
+            or utcnow()
+        )
+
+        now = utcnow()
+
+        await self.query(
+            """
+            UPDATE account_links
+            SET
+                last_message_time = ?,
+                updated_at = ?
+            WHERE snowflake_id = ?
+            """,
+            (
+                timestamp,
+                now,
+                discord_id,
+            ),
+        )
+
+        lunar_uuid = getattr(
+            existing,
+            "lunar_uuid",
+            None,
+        )
+
+        if lunar_uuid:
+
+            await self.query(
+                """
+                UPDATE account_links_by_uuid
+                SET
+                    last_message_time = ?,
+                    updated_at = ?
+                WHERE lunar_uuid = ?
+                """,
+                (
+                    timestamp,
+                    now,
+                    lunar_uuid,
+                ),
+            )
+
+        return await self.get(
+            discord_id
+        )
+
+    # --------------------------------------------------------
+    # UNLINK
+    # --------------------------------------------------------
+
+    async def unlink(
+        self,
+        snowflake_id: int | str,
+    ):
+
+        discord_id = str(
+            snowflake_id
+        )
+
+        existing = await self.get(
+            discord_id
+        )
+
+        if not existing:
+            return False
+
+        lunar_uuid = getattr(
+            existing,
+            "lunar_uuid",
+            None,
+        )
+
+        queries = [
+            (
+                """
+                DELETE FROM account_links
+                WHERE snowflake_id = ?
+                """,
+                (
+                    discord_id,
+                ),
+            ),
+        ]
+
+        if lunar_uuid:
+
+            queries.append(
+                (
+                    """
+                    DELETE FROM account_links_by_uuid
+                    WHERE lunar_uuid = ?
+                    """,
+                    (
+                        lunar_uuid,
+                    ),
+                )
+            )
+
+        await self.db.batch(
+            queries,
+            logged=True,
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # IS VERIFIED
+    # --------------------------------------------------------
+
+    async def is_verified(
+        self,
+        snowflake_id: int | str,
+    ) -> bool:
+
+        account = await self.get(
+            snowflake_id
+        )
+
+        if not account:
+            return False
+
+        return bool(
+            getattr(
+                account,
+                "verified",
+                False,
+            )
+        )
+
+    # --------------------------------------------------------
+    # ENSURE
+    # --------------------------------------------------------
+
+    async def ensure(
+        self,
+        snowflake_id: int | str,
+        *,
+        lunar_uuid: str | uuid.UUID,
+        verification_code: str,
+        username: Optional[str] = None,
+        verified: bool = False,
+    ):
+
+        existing = await self.get(
+            snowflake_id
+        )
+
+        metadata: dict[str, str] = {}
+
+        if existing:
+
+            metadata.update(
+                getattr(
+                    existing,
+                    "metadata",
+                    None,
+                )
+                or {}
+            )
+
+        if username:
+
+            metadata[
+                "username"
+            ] = username.strip()
+
+        if existing:
+
+            if (
+                getattr(
+                    existing,
+                    "lunar_uuid",
+                    None,
+                )
+                and str(
+                    existing.lunar_uuid
+                ) != str(
+                    lunar_uuid
+                )
+            ):
+
+                raise ValueError(
+                    "This Discord account is already "
+                    "linked to a different Lunar account."
+                )
+
+        return await self.link(
+            snowflake_id,
+            lunar_uuid,
+            verification_code,
+            verified=verified,
+            metadata=metadata,
+        )
 
 # ============================================================
 # COMMAND STATS

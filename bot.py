@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -5,6 +7,7 @@ from pathlib import Path
 
 import aiohttp
 import discord
+
 from discord import app_commands
 from discord.ext import commands, tasks
 
@@ -23,7 +26,9 @@ if not TOKEN:
         "TOKEN environment variable is not set."
     )
 
+
 COGS_DIR = Path("./cogs")
+
 SCAN_INTERVAL = 1.0
 
 GUILD_ID = 1330574273760465029
@@ -44,12 +49,43 @@ HTTP_TIMEOUT = aiohttp.ClientTimeout(
 
 
 # ============================================================
+# OWNERS
+# ============================================================
+
+OWNERS = {
+    1419744000977403994,
+    960946185768685618,
+}
+
+
+# ============================================================
+# MAINTENANCE
+# ============================================================
+
+MAINTENANCE_VARIABLE = "bot_maintenance"
+
+DEVELOPER_COMMANDS = {
+    "debug",
+    "logs",
+    "cache",
+    "database",
+    "shard",
+    "maintenance",
+}
+
+
+# ============================================================
 # LOGGING
 # ============================================================
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    format=(
+        "%(asctime)s | "
+        "%(levelname)s | "
+        "%(name)s | "
+        "%(message)s"
+    ),
 )
 
 logger = logging.getLogger("LunarBot")
@@ -60,14 +96,31 @@ logger = logging.getLogger("LunarBot")
 # ============================================================
 
 intents = discord.Intents.default()
+
 intents.message_content = True
 intents.members = True
+
 
 bot = commands.Bot(
     command_prefix="!",
     intents=intents,
     status=discord.Status.idle,
 )
+
+
+# Runtime maintenance state.
+#
+# The persistent source of truth is ScyllaDB.
+# These values are loaded during startup and then updated
+# by /maintenance.
+#
+bot.maintenance_mode = False
+bot.maintenance_reason = ""
+
+
+# ============================================================
+# STATE
+# ============================================================
 
 loaded_cogs: dict[str, float] = {}
 
@@ -86,41 +139,234 @@ presence_index = 0
 
 
 # ============================================================
+# MAINTENANCE STATE
+# ============================================================
+
+async def load_maintenance_state() -> None:
+    """
+    Load the persistent maintenance state from ScyllaDB.
+
+    Stored in:
+
+        variables
+        identifier = bot_maintenance
+    """
+
+    try:
+
+        row = await db.variables.get(
+            MAINTENANCE_VARIABLE
+        )
+
+        if row is None:
+
+            bot.maintenance_mode = False
+            bot.maintenance_reason = ""
+
+            logger.info(
+                "Maintenance state: disabled "
+                "(no persistent state found)."
+            )
+
+            return
+
+        if row.int_value is not None:
+
+            bot.maintenance_mode = (
+                int(row.int_value) == 1
+            )
+
+        else:
+
+            bot.maintenance_mode = (
+                str(
+                    row.string_value or ""
+                ).strip().lower()
+                in {
+                    "1",
+                    "true",
+                    "enabled",
+                    "enable",
+                    "on",
+                }
+            )
+
+        bot.maintenance_reason = (
+            row.string_value or ""
+        )
+
+        logger.info(
+            "Maintenance state loaded: %s | reason=%s",
+            (
+                "ENABLED"
+                if bot.maintenance_mode
+                else "DISABLED"
+            ),
+            bot.maintenance_reason or "None",
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Failed to load maintenance state."
+        )
+
+        # Fail open so a bad maintenance record does not
+        # accidentally disable the entire bot.
+        bot.maintenance_mode = False
+        bot.maintenance_reason = ""
+
+
+# ============================================================
+# GLOBAL APPLICATION COMMAND CHECK
+# ============================================================
+
+@bot.tree.interaction_check
+async def global_interaction_check(
+    interaction: discord.Interaction,
+) -> bool:
+    """
+    Global gate for every slash command.
+
+    Priority:
+
+        1. Owners bypass everything.
+        2. Developer commands are owner-only.
+        3. Maintenance blocks normal commands.
+        4. Otherwise allow execution.
+    """
+
+    user_id = interaction.user.id
+
+    command = interaction.command
+
+    command_name = (
+        command.name
+        if command is not None
+        else None
+    )
+
+    # --------------------------------------------------------
+    # OWNER BYPASS
+    # --------------------------------------------------------
+
+    if user_id in OWNERS:
+        return True
+
+    # --------------------------------------------------------
+    # DEVELOPER COMMANDS
+    # --------------------------------------------------------
+
+    if command_name in DEVELOPER_COMMANDS:
+
+        try:
+
+            await interaction.response.send_message(
+                (
+                    f"{EMOJI['denied']} "
+                    "You do not have access to the "
+                    "Lunar Developer Console."
+                ),
+                ephemeral=True,
+            )
+
+        except discord.HTTPException:
+
+            pass
+
+        return False
+
+    # --------------------------------------------------------
+    # MAINTENANCE MODE
+    # --------------------------------------------------------
+
+    if getattr(
+        bot,
+        "maintenance_mode",
+        False,
+    ):
+
+        reason = (
+            getattr(
+                bot,
+                "maintenance_reason",
+                None,
+            )
+            or "Maintenance is currently in progress."
+        )
+
+        try:
+
+            await interaction.response.send_message(
+                (
+                    f"{EMOJI['loading']} "
+                    "**Lunar is currently under maintenance.**\n\n"
+                    f"{EMOJI['question']} "
+                    f"**Reason:** {reason}"
+                ),
+                ephemeral=True,
+            )
+
+        except discord.HTTPException:
+
+            pass
+
+        return False
+
+    return True
+
+
+# ============================================================
 # HTTP STATUS
 # ============================================================
 
 async def fetch_status(
     session: aiohttp.ClientSession,
     url: str,
-) -> tuple[int | None, float | None, str | None]:
+) -> tuple[
+    int | None,
+    float | None,
+    str | None,
+]:
 
-    started = asyncio.get_running_loop().time()
+    started = (
+        asyncio.get_running_loop().time()
+    )
 
     try:
+
         async with session.get(
             url,
             allow_redirects=True,
         ) as response:
 
             elapsed = (
-                asyncio.get_running_loop().time() - started
+                asyncio.get_running_loop().time()
+                - started
             ) * 1000
 
             return (
                 response.status,
-                round(elapsed, 2),
+                round(
+                    elapsed,
+                    2,
+                ),
                 None,
             )
 
     except Exception as exc:
 
         elapsed = (
-            asyncio.get_running_loop().time() - started
+            asyncio.get_running_loop().time()
+            - started
         ) * 1000
 
         return (
             None,
-            round(elapsed, 2),
+            round(
+                elapsed,
+                2,
+            ),
             str(exc),
         )
 
@@ -128,7 +374,7 @@ async def fetch_status(
 async def get_lunar_status() -> dict[str, object]:
 
     async with aiohttp.ClientSession(
-        timeout=HTTP_TIMEOUT
+        timeout=HTTP_TIMEOUT,
     ) as session:
 
         website_task = fetch_status(
@@ -162,17 +408,28 @@ async def refresh_lunar_status():
     global latest_status
 
     try:
-        latest_status = await get_lunar_status()
+
+        latest_status = (
+            await get_lunar_status()
+        )
 
         logger.info(
-            "Lunar status refreshed | Website=%s | API=%s",
-            latest_status["website_status"],
-            latest_status["api_status"],
+            (
+                "Lunar status refreshed | "
+                "Website=%s | API=%s"
+            ),
+            latest_status[
+                "website_status"
+            ],
+            latest_status[
+                "api_status"
+            ],
         )
 
         return latest_status
 
     except Exception:
+
         logger.exception(
             "Failed to refresh Lunar status."
         )
@@ -184,7 +441,9 @@ async def refresh_lunar_status():
 # STATUS HELPERS
 # ============================================================
 
-def status_text(status: int | None) -> str:
+def status_text(
+    status: int | None,
+) -> str:
 
     if status == 200:
         return "Up"
@@ -195,7 +454,9 @@ def status_text(status: int | None) -> str:
     return "Down"
 
 
-def status_emoji(status: int | None) -> str:
+def status_emoji(
+    status: int | None,
+) -> str:
 
     if status == 200:
         return EMOJI["approved"]
@@ -214,16 +475,37 @@ def build_status_embed(
     status: dict[str, object],
 ) -> discord.Embed:
 
-    website_status = status["website_status"]
-    website_latency = status["website_latency"]
-    website_error = status["website_error"]
+    website_status = status[
+        "website_status"
+    ]
 
-    api_status = status["api_status"]
-    api_latency = status["api_latency"]
-    api_error = status["api_error"]
+    website_latency = status[
+        "website_latency"
+    ]
 
-    website_online = website_status == 200
-    api_online = api_status == 200
+    website_error = status[
+        "website_error"
+    ]
+
+    api_status = status[
+        "api_status"
+    ]
+
+    api_latency = status[
+        "api_latency"
+    ]
+
+    api_error = status[
+        "api_error"
+    ]
+
+    website_online = (
+        website_status == 200
+    )
+
+    api_online = (
+        api_status == 200
+    )
 
     everything_online = (
         website_online
@@ -231,7 +513,10 @@ def build_status_embed(
     )
 
     embed = discord.Embed(
-        title=f"{EMOJI['moon']} Lunar System Status",
+        title=(
+            f"{EMOJI['moon']} "
+            "Lunar System Status"
+        ),
         color=(
             discord.Color.green()
             if everything_online
@@ -247,13 +532,17 @@ def build_status_embed(
     )
 
     if website_latency is not None:
+
         website_value += (
-            f"\n{EMOJI['loading']} `{website_latency}ms`"
+            f"\n{EMOJI['loading']} "
+            f"`{website_latency}ms`"
         )
 
     if website_error:
+
         website_value += (
-            f"\n{EMOJI['error']} `{website_error[:250]}`"
+            f"\n{EMOJI['error']} "
+            f"`{website_error[:250]}`"
         )
 
     api_value = (
@@ -263,23 +552,33 @@ def build_status_embed(
     )
 
     if api_latency is not None:
+
         api_value += (
-            f"\n{EMOJI['loading']} `{api_latency}ms`"
+            f"\n{EMOJI['loading']} "
+            f"`{api_latency}ms`"
         )
 
     if api_error:
+
         api_value += (
-            f"\n{EMOJI['error']} `{api_error[:250]}`"
+            f"\n{EMOJI['error']} "
+            f"`{api_error[:250]}`"
         )
 
     embed.add_field(
-        name=f"{EMOJI['lunar']} Website",
+        name=(
+            f"{EMOJI['lunar']} "
+            "Website"
+        ),
         value=website_value,
         inline=False,
     )
 
     embed.add_field(
-        name=f"{EMOJI['dev']} API",
+        name=(
+            f"{EMOJI['dev']} "
+            "API"
+        ),
         value=api_value,
         inline=False,
     )
@@ -299,15 +598,22 @@ def build_status_embed(
 async def website_status_monitor():
 
     try:
-        status = await refresh_lunar_status()
 
-        guild = bot.get_guild(GUILD_ID)
+        status = (
+            await refresh_lunar_status()
+        )
+
+        guild = bot.get_guild(
+            GUILD_ID
+        )
 
         if guild is None:
+
             logger.warning(
                 "Status monitor: guild %s not found.",
                 GUILD_ID,
             )
+
             return
 
         channel = guild.get_channel(
@@ -317,32 +623,42 @@ async def website_status_monitor():
         if channel is None:
 
             try:
-                channel = await guild.fetch_channel(
-                    STATUS_CHANNEL_ID
+
+                channel = (
+                    await guild.fetch_channel(
+                        STATUS_CHANNEL_ID
+                    )
                 )
 
             except Exception:
+
                 logger.exception(
                     "Could not fetch status channel %s.",
                     STATUS_CHANNEL_ID,
                 )
+
                 return
 
         if not isinstance(
             channel,
             discord.TextChannel,
         ):
+
             logger.warning(
                 "Status channel %s is not a text channel.",
                 STATUS_CHANNEL_ID,
             )
+
             return
 
         await channel.send(
-            embed=build_status_embed(status)
+            embed=build_status_embed(
+                status
+            )
         )
 
     except Exception:
+
         logger.exception(
             "Website status monitor failed."
         )
@@ -350,6 +666,7 @@ async def website_status_monitor():
 
 @website_status_monitor.before_loop
 async def before_website_status_monitor():
+
     await bot.wait_until_ready()
 
 
@@ -377,7 +694,8 @@ async def rotating_presence():
         )
 
         activity_name = (
-            f"{EMOJI['lunar']} Website • {state}"
+            f"{EMOJI['lunar']} "
+            f"Website • {state}"
         )
 
     else:
@@ -387,7 +705,8 @@ async def rotating_presence():
         )
 
         activity_name = (
-            f"{EMOJI['dev']} API • {state}"
+            f"{EMOJI['dev']} "
+            f"API • {state}"
         )
 
     try:
@@ -395,7 +714,9 @@ async def rotating_presence():
         await bot.change_presence(
             status=discord.Status.idle,
             activity=discord.Activity(
-                type=discord.ActivityType.watching,
+                type=(
+                    discord.ActivityType.watching
+                ),
                 name=activity_name,
             ),
         )
@@ -406,6 +727,7 @@ async def rotating_presence():
         )
 
     except Exception:
+
         logger.exception(
             "Failed to update bot presence."
         )
@@ -420,8 +742,6 @@ async def before_rotating_presence():
 
     await bot.wait_until_ready()
 
-    # Get an initial status before displaying
-    # Website/API state in the presence.
     await refresh_lunar_status()
 
 
@@ -429,9 +749,15 @@ async def before_rotating_presence():
 # COG DISCOVERY
 # ============================================================
 
-def discover_cogs() -> dict[str, tuple[Path, float]]:
+def discover_cogs() -> dict[
+    str,
+    tuple[Path, float],
+]:
 
-    discovered: dict[str, tuple[Path, float]] = {}
+    discovered: dict[
+        str,
+        tuple[Path, float],
+    ] = {}
 
     if not COGS_DIR.exists():
 
@@ -440,9 +766,13 @@ def discover_cogs() -> dict[str, tuple[Path, float]]:
             exist_ok=True,
         )
 
-    for file in COGS_DIR.rglob("*.py"):
+    for file in COGS_DIR.rglob(
+        "*.py"
+    ):
 
-        if file.name.startswith("_"):
+        if file.name.startswith(
+            "_"
+        ):
             continue
 
         relative = file.relative_to(
@@ -478,7 +808,9 @@ async def sync_commands():
 
         try:
 
-            synced = await bot.tree.sync()
+            synced = (
+                await bot.tree.sync()
+            )
 
             logger.info(
                 "Synced %d slash command(s).",
@@ -486,6 +818,7 @@ async def sync_commands():
             )
 
         except Exception:
+
             logger.exception(
                 "Failed to sync slash commands."
             )
@@ -495,11 +828,15 @@ async def sync_commands():
 # COG LOADING
 # ============================================================
 
-async def load_cog(module: str):
+async def load_cog(
+    module: str,
+):
 
     try:
 
-        await bot.load_extension(module)
+        await bot.load_extension(
+            module
+        )
 
         logger.info(
             "Loaded cog: %s",
@@ -521,11 +858,15 @@ async def load_cog(module: str):
         )
 
 
-async def reload_cog(module: str):
+async def reload_cog(
+    module: str,
+):
 
     try:
 
-        await bot.reload_extension(module)
+        await bot.reload_extension(
+            module
+        )
 
         logger.info(
             "Reloaded cog: %s",
@@ -535,11 +876,16 @@ async def reload_cog(module: str):
     except commands.ExtensionNotLoaded:
 
         logger.warning(
-            "Cog %s was not loaded, attempting to load it.",
+            (
+                "Cog %s was not loaded, "
+                "attempting to load it."
+            ),
             module,
         )
 
-        await load_cog(module)
+        await load_cog(
+            module
+        )
 
     except Exception:
 
@@ -549,11 +895,15 @@ async def reload_cog(module: str):
         )
 
 
-async def unload_cog(module: str):
+async def unload_cog(
+    module: str,
+):
 
     try:
 
-        await bot.unload_extension(module)
+        await bot.unload_extension(
+            module
+        )
 
         logger.info(
             "Unloaded cog: %s",
@@ -561,6 +911,7 @@ async def unload_cog(module: str):
         )
 
     except commands.ExtensionNotLoaded:
+
         pass
 
     except Exception:
@@ -595,27 +946,36 @@ async def cog_watcher():
 
             if module not in loaded_cogs:
 
-                await load_cog(module)
-
-                loaded_cogs[module] = (
-                    modified_time
+                await load_cog(
+                    module
                 )
+
+                loaded_cogs[
+                    module
+                ] = modified_time
 
                 changed = True
 
                 continue
 
             old_modified_time = (
-                loaded_cogs[module]
+                loaded_cogs[
+                    module
+                ]
             )
 
-            if modified_time != old_modified_time:
+            if (
+                modified_time
+                != old_modified_time
+            ):
 
-                await reload_cog(module)
-
-                loaded_cogs[module] = (
-                    modified_time
+                await reload_cog(
+                    module
                 )
+
+                loaded_cogs[
+                    module
+                ] = modified_time
 
                 changed = True
 
@@ -630,7 +990,9 @@ async def cog_watcher():
 
         for module in deleted:
 
-            await unload_cog(module)
+            await unload_cog(
+                module
+            )
 
             loaded_cogs.pop(
                 module,
@@ -643,7 +1005,11 @@ async def cog_watcher():
         # SYNC
         # ----------------------------------------------------
 
-        if changed and bot.is_ready():
+        if (
+            changed
+            and bot.is_ready()
+        ):
+
             await sync_commands()
 
     except Exception:
@@ -663,7 +1029,9 @@ async def before_cog_watcher():
 # COMMAND USAGE TRACKER
 # ============================================================
 
-@bot.listen("on_app_command_completion")
+@bot.listen(
+    "on_app_command_completion"
+)
 async def command_usage_tracker(
     interaction: discord.Interaction,
     command: app_commands.Command,
@@ -677,8 +1045,8 @@ async def command_usage_tracker(
 
     except Exception:
 
-        # Statistics must never break
-        # a successfully completed command.
+        # Command statistics must never
+        # break an otherwise successful command.
         logger.exception(
             "Failed to record command usage: %s",
             getattr(
@@ -695,38 +1063,36 @@ async def command_usage_tracker(
 
 @bot.tree.command(
     name="ping",
-    description="Check the bot, Lunar website and API status.",
+    description=(
+        "Check the bot, Lunar website "
+        "and API status."
+    ),
 )
 async def ping(
     interaction: discord.Interaction,
 ):
 
-    # --------------------------------------------------------
-    # FAKE LOADING
-    # --------------------------------------------------------
-
     await interaction.response.send_message(
-        f"{EMOJI['loading']} Checking Lunar systems...",
+        (
+            f"{EMOJI['loading']} "
+            "Checking Lunar systems..."
+        ),
         ephemeral=True,
     )
 
-    await asyncio.sleep(1)
-
-    # --------------------------------------------------------
-    # BOT LATENCY
-    # --------------------------------------------------------
+    await asyncio.sleep(
+        1
+    )
 
     bot_latency = round(
         bot.latency * 1000
     )
 
-    # --------------------------------------------------------
-    # WEBSITE / API
-    # --------------------------------------------------------
-
     try:
 
-        status = await refresh_lunar_status()
+        status = (
+            await refresh_lunar_status()
+        )
 
         website_status = status[
             "website_status"
@@ -758,7 +1124,10 @@ async def ping(
         )
 
         embed = discord.Embed(
-            title=f"{EMOJI['lunar']} Lunar Ping",
+            title=(
+                f"{EMOJI['lunar']} "
+                "Lunar Ping"
+            ),
             description=(
                 f"{EMOJI['approved']} "
                 "**Lunar systems have been checked.**"
@@ -770,23 +1139,18 @@ async def ping(
             ),
         )
 
-        # ----------------------------------------------------
-        # DISCORD
-        # ----------------------------------------------------
-
         embed.add_field(
-            name=f"{EMOJI['moon']} Discord Gateway",
+            name=(
+                f"{EMOJI['moon']} "
+                "Discord Gateway"
+            ),
             value=(
                 f"{EMOJI['approved']} "
                 f"`{bot_latency}ms`\n"
-                f"**Up**"
+                "**Up**"
             ),
             inline=True,
         )
-
-        # ----------------------------------------------------
-        # WEBSITE
-        # ----------------------------------------------------
 
         website_latency_text = (
             f"`{website_latency}ms`"
@@ -795,7 +1159,10 @@ async def ping(
         )
 
         embed.add_field(
-            name=f"{EMOJI['lunar']} Website",
+            name=(
+                f"{EMOJI['lunar']} "
+                "Website"
+            ),
             value=(
                 f"{status_emoji(website_status)} "
                 f"`{website_status}`\n"
@@ -805,10 +1172,6 @@ async def ping(
             inline=True,
         )
 
-        # ----------------------------------------------------
-        # API
-        # ----------------------------------------------------
-
         api_latency_text = (
             f"`{api_latency}ms`"
             if api_latency is not None
@@ -816,7 +1179,10 @@ async def ping(
         )
 
         embed.add_field(
-            name=f"{EMOJI['dev']} API",
+            name=(
+                f"{EMOJI['dev']} "
+                "API"
+            ),
             value=(
                 f"{status_emoji(api_status)} "
                 f"`{api_status}`\n"
@@ -827,7 +1193,9 @@ async def ping(
         )
 
         embed.set_footer(
-            text="Lunar Infrastructure • Live Check"
+            text=(
+                "Lunar Infrastructure • Live Check"
+            )
         )
 
         await interaction.edit_original_response(
@@ -842,7 +1210,10 @@ async def ping(
         )
 
         error_embed = discord.Embed(
-            title=f"{EMOJI['error']} Lunar Ping",
+            title=(
+                f"{EMOJI['error']} "
+                "Lunar Ping"
+            ),
             description=(
                 f"{EMOJI['denied']} "
                 "The bot is online, but the external "
@@ -853,7 +1224,9 @@ async def ping(
 
         error_embed.add_field(
             name="Error",
-            value=f"`{str(exc)[:1000]}`",
+            value=(
+                f"`{str(exc)[:1000]}`"
+            ),
             inline=False,
         )
 
@@ -876,23 +1249,30 @@ async def on_ready():
         bot.user.id,
     )
 
+    # Keep the bot Idle.
     await bot.change_presence(
         status=discord.Status.idle,
         activity=discord.Activity(
             type=discord.ActivityType.watching,
-            name=f"{EMOJI['lunar']} Website • Checking",
+            name=(
+                f"{EMOJI['lunar']} "
+                "Website • Checking"
+            ),
         ),
     )
 
     await sync_commands()
 
     if not cog_watcher.is_running():
+
         cog_watcher.start()
 
     if not website_status_monitor.is_running():
+
         website_status_monitor.start()
 
     if not rotating_presence.is_running():
+
         rotating_presence.start()
 
 
@@ -907,12 +1287,26 @@ async def main():
         exist_ok=True,
     )
 
+    # --------------------------------------------------------
+    # Database first
+    # --------------------------------------------------------
+
     await db.initialize()
+
+    # --------------------------------------------------------
+    # Restore persistent maintenance state
+    # BEFORE Discord starts accepting commands.
+    # --------------------------------------------------------
+
+    await load_maintenance_state()
 
     try:
 
         async with bot:
-            await bot.start(TOKEN)
+
+            await bot.start(
+                TOKEN
+            )
 
     finally:
 
@@ -924,4 +1318,7 @@ async def main():
 # ============================================================
 
 if __name__ == "__main__":
-    asyncio.run(main())
+
+    asyncio.run(
+        main()
+    )

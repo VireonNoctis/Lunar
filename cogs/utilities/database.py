@@ -1,14 +1,11 @@
-
-from __future__ import annotations
-
+from _future_ import annotations
 import asyncio
 import json
 import logging
-import os
 import uuid
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import (
     Any,
     Iterable,
@@ -56,7 +53,10 @@ def json_dumps(value: Any) -> str:
     )
 
 
-def json_loads(value: Any, default: Any = None) -> Any:
+def json_loads(
+    value: Any,
+    default: Any = None,
+) -> Any:
     if value is None:
         return default
 
@@ -96,7 +96,7 @@ class ScyllaConfig:
 
 
 # ============================================================
-# CONFIG
+# DATABASE CONFIG
 # ============================================================
 
 SCYLLA_CONFIG = ScyllaConfig(
@@ -131,9 +131,10 @@ SCYLLA_CONFIG = ScyllaConfig(
 # ============================================================
 
 CORE_SCHEMA: tuple[str, ...] = (
-    # --------------------------------------------------------
+
+    # ========================================================
     # BOT VARIABLES
-    # --------------------------------------------------------
+    # ========================================================
 
     """
     CREATE TABLE IF NOT EXISTS variables (
@@ -146,21 +147,35 @@ CORE_SCHEMA: tuple[str, ...] = (
     )
     """,
 
-
     # ========================================================
-    # COMMAND STATS
+    # COMMAND COUNTERS
+    # ========================================================
+    #
+    # Counters are intentionally isolated from regular columns.
+    #
+    # command_counters:
+    #     high-volume usage counter
+    #
+    # command_usage_meta:
+    #     metadata that cannot live inside a counter table
+    #
     # ========================================================
 
-"""
-CREATE TABLE IF NOT EXISTS command_stats (
-    command_name text PRIMARY KEY,
+    """
+    CREATE TABLE IF NOT EXISTS command_counters (
+        command_name text PRIMARY KEY,
 
-    uses bigint,
+        uses counter
+    )
+    """,
 
-    last_used_at timestamp
-)
-""",
+    """
+    CREATE TABLE IF NOT EXISTS command_usage_meta (
+        command_name text PRIMARY KEY,
 
+        last_used_at timestamp
+    )
+    """,
 
     # ========================================================
     # USERS
@@ -214,16 +229,7 @@ CREATE TABLE IF NOT EXISTS command_stats (
     """,
 
     # ========================================================
-    # ACCOUNT LINKS (BY LUNAR UUID)
-    # ========================================================
-    #
-    # Dedicated lookup table for the "find account by Lunar UUID"
-    # access pattern, per the modeling rule at the bottom of this
-    # file: prefer a query-oriented table over a secondary index.
-    #
-    # This is kept in sync with `account_links` by
-    # AccountLinkRepository (dual-write on link()/set_verified()).
-    #
+    # ACCOUNT LINKS BY LUNAR UUID
     # ========================================================
 
     """
@@ -420,7 +426,7 @@ CREATE TABLE IF NOT EXISTS command_stats (
     """,
 
     # ========================================================
-    # AUDIT
+    # AUDIT LOGS
     # ========================================================
 
     """
@@ -456,6 +462,7 @@ CREATE TABLE IF NOT EXISTS command_stats (
     """
     CREATE TABLE IF NOT EXISTS bot_counters (
         stat_name text PRIMARY KEY,
+
         value counter
     )
     """,
@@ -486,8 +493,9 @@ CREATE TABLE IF NOT EXISTS command_stats (
     """,
 
     # ========================================================
-    # GITHUB COMMITS & ISSUES
+    # GITHUB COMMITS
     # ========================================================
+
     """
     CREATE TABLE IF NOT EXISTS github_commits (
         repository text,
@@ -526,6 +534,10 @@ CREATE TABLE IF NOT EXISTS command_stats (
     )
     """,
 
+    # ========================================================
+    # GITHUB ISSUES
+    # ========================================================
+
     """
     CREATE TABLE IF NOT EXISTS github_issues (
         repository text,
@@ -553,20 +565,7 @@ CREATE TABLE IF NOT EXISTS command_stats (
     """,
 
     # ========================================================
-    # GENERIC EXTENSION STORAGE
-    # ========================================================
-    #
-    # This table is intentionally generic.
-    #
-    # It is NOT meant to replace proper query-oriented tables.
-    # It is useful for:
-    #
-    #   - temporary metadata
-    #   - experimental systems
-    #   - caches
-    #   - plugin state
-    #   - future features
-    #
+    # EXTENSION STORAGE
     # ========================================================
 
     """
@@ -590,32 +589,40 @@ CREATE TABLE IF NOT EXISTS command_stats (
         )
     )
     """,
-)
-# ============================================================
-# MENTION REPOSITORY
-# ============================================================
 
-"""
-CREATE TABLE IF NOT EXISTS mentions_by_user (
-    mentioned_id text,
-    archived boolean,
-    is_read boolean,
-    created_at timestamp,
-    id uuid,
+    # ========================================================
+    # MENTIONS
+    # ========================================================
 
-    message_id text,
-    message_author_id text,
-    channel_id text,
-    guild_id text,
+    """
+    CREATE TABLE IF NOT EXISTS mentions_by_user (
+        mentioned_id text,
+        archived boolean,
+        is_read boolean,
 
-    PRIMARY KEY ((mentioned_id, archived, is_read), created_at, id)
-) WITH CLUSTERING ORDER BY (created_at DESC, id DESC)
-""",
+        created_at timestamp,
+        id uuid,
 
+        message_id text,
+        message_author_id text,
+        channel_id text,
+        guild_id text,
 
-# ============================================================
-# GIVEAWAY
-# ============================================================
+        PRIMARY KEY (
+            (mentioned_id, archived, is_read),
+            created_at,
+            id
+        )
+    )
+    WITH CLUSTERING ORDER BY (
+        created_at DESC,
+        id DESC
+    )
+    """,
+
+    # ========================================================
+    # GIVEAWAYS
+    # ========================================================
 
     """
     CREATE TABLE IF NOT EXISTS giveaways (
@@ -647,12 +654,21 @@ CREATE TABLE IF NOT EXISTS mentions_by_user (
     )
     """,
 
+    # ========================================================
+    # GIVEAWAYS BY MESSAGE
+    # ========================================================
+
     """
     CREATE TABLE IF NOT EXISTS giveaways_by_message (
         message_id text PRIMARY KEY,
+
         giveaway_id text
     )
     """,
+
+    # ========================================================
+    # ACTIVE GIVEAWAYS
+    # ========================================================
 
     """
     CREATE TABLE IF NOT EXISTS giveaways_active (
@@ -670,8 +686,7 @@ CREATE TABLE IF NOT EXISTS mentions_by_user (
         ends_at ASC
     )
     """,
-
-
+)
 
 
 # ============================================================
@@ -679,6 +694,7 @@ CREATE TABLE IF NOT EXISTS mentions_by_user (
 # ============================================================
 
 class ScyllaDatabase:
+
     def __init__(
         self,
         config: ScyllaConfig,
@@ -689,7 +705,6 @@ class ScyllaDatabase:
         self.session: Optional[Session] = None
 
         self._initialized = False
-
         self._lock = asyncio.Lock()
 
         self._prepared: dict[
@@ -702,9 +717,13 @@ class ScyllaDatabase:
         # ----------------------------------------------------
 
         self.users: Optional[UserRepository] = None
-        self.mentions: Optional[MentionRepository] = None
+
         self.account_links: Optional[
             AccountLinkRepository
+        ] = None
+
+        self.command_stats: Optional[
+            CommandStatsRepository
         ] = None
 
         self.xp: Optional[
@@ -747,30 +766,17 @@ class ScyllaDatabase:
             ExtensionRepository
         ] = None
 
-        # ====================================================
-        # EXTENSION AREA
-        # ====================================================
-        #
-        # Add future repositories here.
-        #
-        # self.economy = None
-        # self.inventory = None
-        # self.gacha = None
-        # self.library = None
-        # self.anilist = None
-        # self.novels = None
-        # self.manga = None
-        # self.requests = None
-        # self.tickets = None
-        # self.reminders = None
-        # self.moderation = None
-        # self.warnings = None
-        # self.roles = None
-        # self.achievements = None
-        # self.leaderboards = None
-        # self.statistics = None
-        #
-        # ====================================================
+        self.mentions: Optional[
+            MentionRepository
+        ] = None
+
+        self.variables: Optional[
+            VariableRepository
+        ] = None
+
+        self.giveaways: Optional[
+            GiveawayRepository
+        ] = None
 
     # ========================================================
     # INITIALIZATION
@@ -788,26 +794,20 @@ class ScyllaDatabase:
                 self.config.username
                 and self.config.password
             ):
-                auth_provider = (
-                    PlainTextAuthProvider(
-                        username=self.config.username,
-                        password=self.config.password,
-                    )
+                auth_provider = PlainTextAuthProvider(
+                    username=self.config.username,
+                    password=self.config.password,
                 )
 
             kwargs: dict[str, Any] = {
                 "contact_points": list(
                     self.config.hosts
                 ),
-
                 "port": self.config.port,
-
                 "auth_provider": auth_provider,
-
                 "connect_timeout": (
                     self.config.connect_timeout
                 ),
-
                 "control_connection_timeout": (
                     self.config.connect_timeout
                 ),
@@ -854,10 +854,21 @@ class ScyllaDatabase:
             )
 
     # ========================================================
+    # REQUIRE INITIALIZATION
+    # ========================================================
+
+    def require_initialized(self) -> None:
+        if not self._initialized:
+            raise RuntimeError(
+                "Scylla database has not been initialized."
+            )
+
+    # ========================================================
     # KEYSPACE
     # ========================================================
 
     def _create_keyspace(self):
+
         if self.session is None:
             raise RuntimeError(
                 "Scylla session does not exist."
@@ -879,7 +890,7 @@ class ScyllaDatabase:
             replication = (
                 "{"
                 "'class': 'SimpleStrategy', "
-                f"'replication_factor': "
+                "'replication_factor': "
                 f"{self.config.replication_factor}"
                 "}"
             )
@@ -887,13 +898,13 @@ class ScyllaDatabase:
         query = f"""
         CREATE KEYSPACE IF NOT EXISTS
         {self.config.keyspace}
-
         WITH replication = {replication}
         """
 
         self.session.execute(query)
 
     def _switch_keyspace(self):
+
         if self.cluster is None:
             raise RuntimeError(
                 "Cluster is not initialized."
@@ -927,64 +938,42 @@ class ScyllaDatabase:
     # ========================================================
 
     def _bind_repositories(self):
-    self.users = UserRepository(self)
-    self.xp_events = XPEventRepository(self)
-    self.variables = VariableRepository(self)
+
         self.users = UserRepository(self)
-        self.command_stats = CommandStatsRepository(self)
+
         self.account_links = (
             AccountLinkRepository(self)
         )
-        self.giveaways = GiveawayRepository(self)
+
+        self.command_stats = (
+            CommandStatsRepository(self)
+        )
+
         self.xp = XPRepository(self)
 
         self.shame = ShameRepository(self)
 
         self.guilds = GuildRepository(self)
 
-        self.settings = SettingsRepository(
-            self
-        )
+        self.settings = SettingsRepository(self)
 
-        self.flags = FeatureFlagRepository(
-            self
-        )
+        self.flags = FeatureFlagRepository(self)
 
-        self.cooldowns = CooldownRepository(
-            self
-        )
+        self.cooldowns = CooldownRepository(self)
 
-        self.audit = AuditRepository(
-            self
-        )
+        self.audit = AuditRepository(self)
 
-        self.stats = StatsRepository(
-            self
-        )
+        self.stats = StatsRepository(self)
 
-        self.github = GitHubRepository(
-            self
-        )
+        self.github = GitHubRepository(self)
 
-        self.extensions = ExtensionRepository(
-            self
-        )
+        self.extensions = ExtensionRepository(self)
+
         self.mentions = MentionRepository(self)
-        # ====================================================
-        # EXTENSION AREA
-        # ====================================================
-        #
-        # Add:
-        #
-        # self.economy = EconomyRepository(self)
-        #
-        # self.gacha = GachaRepository(self)
-        #
-        # self.library = LibraryRepository(self)
-        #
-        # self.anilist = AniListRepository(self)
-        #
-        # ====================================================
+
+        self.variables = VariableRepository(self)
+
+        self.giveaways = GiveawayRepository(self)
 
     # ========================================================
     # PREPARED STATEMENTS
@@ -1029,6 +1018,7 @@ class ScyllaDatabase:
             ConsistencyLevel
         ] = None,
     ):
+
         if self.session is None:
             raise RuntimeError(
                 "Database is not initialized."
@@ -1042,14 +1032,12 @@ class ScyllaDatabase:
             ),
         )
 
-        response = await asyncio.to_thread(
+        return await asyncio.to_thread(
             self.session.execute,
             statement,
             parameters or (),
             timeout=self.config.request_timeout,
         )
-
-        return response
 
     async def execute_prepared(
         self,
@@ -1060,12 +1048,15 @@ class ScyllaDatabase:
             ConsistencyLevel
         ] = None,
     ):
+
         statement = await self.prepare(
             query
         )
 
-        if consistency:
-            statement.consistency_level = consistency
+        if consistency is not None:
+            statement.consistency_level = (
+                consistency
+            )
 
         if self.session is None:
             raise RuntimeError(
@@ -1091,6 +1082,7 @@ class ScyllaDatabase:
         *,
         logged: bool = False,
     ):
+
         if self.session is None:
             raise RuntimeError(
                 "Database is not initialized."
@@ -1134,8 +1126,10 @@ class ScyllaDatabase:
         try:
 
             result = await self.execute(
-                "SELECT release_version "
-                "FROM system.local"
+                """
+                SELECT release_version
+                FROM system.local
+                """
             )
 
             return result.one() is not None
@@ -1148,6 +1142,110 @@ class ScyllaDatabase:
             )
 
             return False
+
+    # ========================================================
+    # STATUS
+    # ========================================================
+
+    async def status(self) -> dict[str, Any]:
+
+        status: dict[str, Any] = {
+            "initialized": self._initialized,
+
+            "keyspace": self.config.keyspace,
+
+            "hosts": self.config.hosts,
+
+            "port": self.config.port,
+
+            "local_dc": self.config.local_dc,
+
+            "prepared_statements": len(
+                self._prepared
+            ),
+
+            "cluster_connected": (
+                self.cluster is not None
+            ),
+
+            "session_connected": (
+                self.session is not None
+            ),
+
+            "repositories": [],
+        }
+
+        repositories = (
+            "users",
+            "account_links",
+            "command_stats",
+            "xp",
+            "shame",
+            "guilds",
+            "settings",
+            "flags",
+            "cooldowns",
+            "audit",
+            "stats",
+            "github",
+            "extensions",
+            "mentions",
+            "variables",
+            "giveaways",
+        )
+
+        status["repositories"] = [
+            name
+            for name in repositories
+            if getattr(
+                self,
+                name,
+                None,
+            ) is not None
+        ]
+
+        try:
+
+            result = await self.execute(
+                """
+                SELECT
+                    cluster_name,
+                    data_center,
+                    release_version,
+                    host_id
+                FROM system.local
+                """
+            )
+
+            row = result.one()
+
+            if row:
+
+                status["cluster_name"] = (
+                    row.cluster_name
+                )
+
+                status["data_center"] = (
+                    row.data_center
+                )
+
+                status["release_version"] = (
+                    row.release_version
+                )
+
+                status["host_id"] = (
+                    str(row.host_id)
+                )
+
+            status["healthy"] = True
+
+        except Exception as exc:
+
+            status["healthy"] = False
+
+            status["error"] = str(exc)
+
+        return status
 
     # ========================================================
     # CLOSE
@@ -1189,10 +1287,6 @@ class BaseRepository:
         database: ScyllaDatabase,
     ):
         self.db = database
-
-    # ========================================================
-    # GENERIC HELPERS
-    # ========================================================
 
     async def query(
         self,
@@ -1245,6 +1339,9 @@ class UserRepository(BaseRepository):
         shame_points: int = 0,
         username: Optional[str] = None,
         display_name: Optional[str] = None,
+        metadata: Optional[
+            Mapping[str, str]
+        ] = None,
     ):
 
         now = utcnow()
@@ -1285,7 +1382,7 @@ class UserRepository(BaseRepository):
                 now,
                 now,
                 now,
-                {},
+                dict(metadata or {}),
             ),
         )
 
@@ -1293,6 +1390,7 @@ class UserRepository(BaseRepository):
         self,
         snowflake_id: int | str,
     ):
+
         return await self.one(
             """
             SELECT *
@@ -1346,6 +1444,7 @@ class UserRepository(BaseRepository):
         allowed = {
             "level",
             "required_xp",
+            "xp",
             "shame_points",
             "username",
             "display_name",
@@ -1356,7 +1455,6 @@ class UserRepository(BaseRepository):
         }
 
         updates = []
-
         values = []
 
         for key, value in fields.items():
@@ -1445,15 +1543,23 @@ class UserRepository(BaseRepository):
             user.level or 1
         )
 
-        while new_xp >= required_xp:
+        while (
+            new_xp >= required_xp
+            and required_xp > 0
+        ):
 
             new_xp -= required_xp
 
             level += 1
 
-            required_xp = int(
-                required_xp * 1.15
+            required_xp = max(
+                required_xp + 1,
+                int(
+                    required_xp * 1.15
+                ),
             )
+
+        now = utcnow()
 
         await self.query(
             """
@@ -1470,22 +1576,22 @@ class UserRepository(BaseRepository):
                 new_xp,
                 level,
                 required_xp,
-                utcnow(),
-                utcnow(),
+                now,
+                now,
                 str(snowflake_id),
             ),
         )
 
-        # Also store an XP event.
+        if self.db.xp is not None:
 
-        await self.db.xp.record(
-            snowflake_id,
-            amount=amount,
-            reason=reason,
-            guild_id=guild_id,
-            channel_id=channel_id,
-            balance_after=new_xp,
-        )
+            await self.db.xp.record(
+                snowflake_id,
+                amount=amount,
+                reason=reason,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                balance_after=new_xp,
+            )
 
         return await self.get(
             snowflake_id
@@ -1520,10 +1626,6 @@ class UserRepository(BaseRepository):
 
 class AccountLinkRepository(BaseRepository):
 
-    # --------------------------------------------------------
-    # GET BY DISCORD ID
-    # --------------------------------------------------------
-
     async def get(
         self,
         snowflake_id: int | str,
@@ -1539,10 +1641,6 @@ class AccountLinkRepository(BaseRepository):
                 str(snowflake_id),
             ),
         )
-
-    # --------------------------------------------------------
-    # GET BY LUNAR UUID
-    # --------------------------------------------------------
 
     async def get_by_lunar_uuid(
         self,
@@ -1563,25 +1661,6 @@ class AccountLinkRepository(BaseRepository):
                 parsed_uuid,
             ),
         )
-
-    # --------------------------------------------------------
-    # GET BY LUNAR USERNAME
-    # --------------------------------------------------------
-    #
-    # Username is intentionally stored in metadata because
-    # account_links already uses a flexible metadata map.
-    #
-    # Do NOT query:
-    #
-    #     WHERE metadata['username'] = ?
-    #
-    # as a normal access pattern in Scylla.
-    #
-    # This helper is therefore mainly a convenience fallback
-    # for low-frequency operations. The primary lookup should
-    # always be Discord ID -> account row.
-    #
-    # --------------------------------------------------------
 
     async def get_username(
         self,
@@ -1605,12 +1684,8 @@ class AccountLinkRepository(BaseRepository):
         )
 
         username = (
-            metadata.get(
-                "username"
-            )
-            or metadata.get(
-                "lunar_username"
-            )
+            metadata.get("username")
+            or metadata.get("lunar_username")
         )
 
         if not isinstance(
@@ -1626,10 +1701,6 @@ class AccountLinkRepository(BaseRepository):
             if username
             else None
         )
-
-    # --------------------------------------------------------
-    # LINK
-    # --------------------------------------------------------
 
     async def link(
         self,
@@ -1657,7 +1728,38 @@ class AccountLinkRepository(BaseRepository):
         now = utcnow()
 
         # ----------------------------------------------------
-        # NORMALIZE METADATA
+        # EXISTING DISCORD ACCOUNT
+        # ----------------------------------------------------
+
+        existing = await self.get(
+            discord_id
+        )
+
+        # ----------------------------------------------------
+        # PREVENT DUPLICATE LUNAR LINK
+        # ----------------------------------------------------
+
+        uuid_owner = await self.get_by_lunar_uuid(
+            parsed_uuid
+        )
+
+        if (
+            uuid_owner
+            and str(
+                getattr(
+                    uuid_owner,
+                    "snowflake_id",
+                    "",
+                )
+            ) != discord_id
+        ):
+            raise ValueError(
+                "This Lunar account is already linked "
+                "to another Discord account."
+            )
+
+        # ----------------------------------------------------
+        # METADATA
         # ----------------------------------------------------
 
         normalized_metadata = {
@@ -1667,9 +1769,6 @@ class AccountLinkRepository(BaseRepository):
             ).items()
             if value is not None
         }
-        existing = await self.get(
-            discord_id
-        )
 
         if existing:
 
@@ -1689,6 +1788,10 @@ class AccountLinkRepository(BaseRepository):
             normalized_metadata = (
                 existing_metadata
             )
+
+        # ----------------------------------------------------
+        # TIMESTAMPS
+        # ----------------------------------------------------
 
         verified_at = (
             now
@@ -1717,7 +1820,46 @@ class AccountLinkRepository(BaseRepository):
         if created_at is None:
             created_at = now
 
-        queries = [
+        # ----------------------------------------------------
+        # OLD UUID
+        # ----------------------------------------------------
+
+        old_uuid = (
+            getattr(
+                existing,
+                "lunar_uuid",
+                None,
+            )
+            if existing
+            else None
+        )
+
+        queries: list[
+            tuple[str, Sequence[Any]]
+        ] = []
+
+        if (
+            old_uuid
+            and old_uuid != parsed_uuid
+        ):
+
+            queries.append(
+                (
+                    """
+                    DELETE FROM account_links_by_uuid
+                    WHERE lunar_uuid = ?
+                    """,
+                    (
+                        old_uuid,
+                    ),
+                )
+            )
+
+        # ----------------------------------------------------
+        # MAIN ACCOUNT TABLE
+        # ----------------------------------------------------
+
+        queries.append(
             (
                 """
                 INSERT INTO account_links (
@@ -1731,7 +1873,9 @@ class AccountLinkRepository(BaseRepository):
                     updated_at,
                     metadata
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 (
                     discord_id,
@@ -1744,7 +1888,14 @@ class AccountLinkRepository(BaseRepository):
                     now,
                     normalized_metadata,
                 ),
-            ),
+            )
+        )
+
+        # ----------------------------------------------------
+        # UUID LOOKUP TABLE
+        # ----------------------------------------------------
+
+        queries.append(
             (
                 """
                 INSERT INTO account_links_by_uuid (
@@ -1758,7 +1909,9 @@ class AccountLinkRepository(BaseRepository):
                     updated_at,
                     metadata
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 (
                     parsed_uuid,
@@ -1771,8 +1924,8 @@ class AccountLinkRepository(BaseRepository):
                     now,
                     normalized_metadata,
                 ),
-            ),
-        ]
+            )
+        )
 
         await self.db.batch(
             queries,
@@ -1782,10 +1935,6 @@ class AccountLinkRepository(BaseRepository):
         return await self.get(
             discord_id
         )
-
-    # --------------------------------------------------------
-    # UPDATE METADATA
-    # --------------------------------------------------------
 
     async def update_metadata(
         self,
@@ -1865,10 +2014,6 @@ class AccountLinkRepository(BaseRepository):
             discord_id
         )
 
-    # --------------------------------------------------------
-    # SET USERNAME
-    # --------------------------------------------------------
-
     async def set_username(
         self,
         snowflake_id: int | str,
@@ -1888,10 +2033,6 @@ class AccountLinkRepository(BaseRepository):
                 "username": username,
             },
         )
-
-    # --------------------------------------------------------
-    # SET VERIFIED
-    # --------------------------------------------------------
 
     async def set_verified(
         self,
@@ -1918,10 +2059,6 @@ class AccountLinkRepository(BaseRepository):
             else None
         )
 
-        # ----------------------------------------------------
-        # MAIN TABLE
-        # ----------------------------------------------------
-
         await self.query(
             """
             UPDATE account_links
@@ -1938,10 +2075,6 @@ class AccountLinkRepository(BaseRepository):
                 discord_id,
             ),
         )
-
-        # ----------------------------------------------------
-        # UUID LOOKUP TABLE
-        # ----------------------------------------------------
 
         lunar_uuid = getattr(
             existing,
@@ -1971,10 +2104,6 @@ class AccountLinkRepository(BaseRepository):
         return await self.get(
             discord_id
         )
-
-    # --------------------------------------------------------
-    # SET VERIFICATION CODE
-    # --------------------------------------------------------
 
     async def set_verification_code(
         self,
@@ -2036,10 +2165,6 @@ class AccountLinkRepository(BaseRepository):
         return await self.get(
             discord_id
         )
-
-    # --------------------------------------------------------
-    # SET LAST MESSAGE TIME
-    # --------------------------------------------------------
 
     async def set_last_message_time(
         self,
@@ -2109,10 +2234,6 @@ class AccountLinkRepository(BaseRepository):
             discord_id
         )
 
-    # --------------------------------------------------------
-    # UNLINK
-    # --------------------------------------------------------
-
     async def unlink(
         self,
         snowflake_id: int | str,
@@ -2168,10 +2289,6 @@ class AccountLinkRepository(BaseRepository):
 
         return True
 
-    # --------------------------------------------------------
-    # IS VERIFIED
-    # --------------------------------------------------------
-
     async def is_verified(
         self,
         snowflake_id: int | str,
@@ -2191,10 +2308,6 @@ class AccountLinkRepository(BaseRepository):
                 False,
             )
         )
-
-    # --------------------------------------------------------
-    # ENSURE
-    # --------------------------------------------------------
 
     async def ensure(
         self,
@@ -2225,23 +2338,22 @@ class AccountLinkRepository(BaseRepository):
 
         if username:
 
-            metadata[
-                "username"
-            ] = username.strip()
+            metadata["username"] = (
+                username.strip()
+            )
 
         if existing:
 
+            existing_uuid = getattr(
+                existing,
+                "lunar_uuid",
+                None,
+            )
+
             if (
-                getattr(
-                    existing,
-                    "lunar_uuid",
-                    None,
-                )
-                and str(
-                    existing.lunar_uuid
-                ) != str(
-                    lunar_uuid
-                )
+                existing_uuid
+                and str(existing_uuid)
+                != str(lunar_uuid)
             ):
 
                 raise ValueError(
@@ -2257,6 +2369,7 @@ class AccountLinkRepository(BaseRepository):
             metadata=metadata,
         )
 
+
 # ============================================================
 # COMMAND STATS
 # ============================================================
@@ -2266,31 +2379,68 @@ class CommandStatsRepository(BaseRepository):
     async def increment(
         self,
         command_name: str,
-    ):
+    ) -> None:
+
+        command_name = (
+            str(command_name)
+            .strip()
+            .lower()
+        )
+
+        if not command_name:
+            return
+
+        # ----------------------------------------------------
+        # COUNTER
+        # ----------------------------------------------------
 
         await self.query(
             """
-            UPDATE command_stats
-            SET
-                uses = coalesce(uses, 0) + 1,
-                last_used_at = ?
+            UPDATE command_counters
+            SET uses = uses + 1
             WHERE command_name = ?
             """,
             (
-                utcnow(),
                 command_name,
+            ),
+        )
+
+        # ----------------------------------------------------
+        # LAST USED METADATA
+        # ----------------------------------------------------
+
+        await self.query(
+            """
+            INSERT INTO command_usage_meta (
+                command_name,
+                last_used_at
+            )
+            VALUES (?, ?)
+            """,
+            (
+                command_name,
+                utcnow(),
             ),
         )
 
     async def get(
         self,
         command_name: str,
-    ):
+    ) -> int:
 
-        return await self.one(
+        command_name = (
+            str(command_name)
+            .strip()
+            .lower()
+        )
+
+        if not command_name:
+            return 0
+
+        row = await self.one(
             """
-            SELECT *
-            FROM command_stats
+            SELECT uses
+            FROM command_counters
             WHERE command_name = ?
             """,
             (
@@ -2298,14 +2448,49 @@ class CommandStatsRepository(BaseRepository):
             ),
         )
 
-    async def total(
+        if not row:
+            return 0
+
+        return int(
+            row.uses or 0
+        )
+
+    async def get_last_used(
         self,
+        command_name: str,
     ):
+
+        command_name = (
+            str(command_name)
+            .strip()
+            .lower()
+        )
+
+        if not command_name:
+            return None
+
+        row = await self.one(
+            """
+            SELECT last_used_at
+            FROM command_usage_meta
+            WHERE command_name = ?
+            """,
+            (
+                command_name,
+            ),
+        )
+
+        if not row:
+            return None
+
+        return row.last_used_at
+
+    async def total(self) -> int:
 
         result = await self.query(
             """
             SELECT uses
-            FROM command_stats
+            FROM command_counters
             """
         )
 
@@ -2313,6 +2498,26 @@ class CommandStatsRepository(BaseRepository):
             int(row.uses or 0)
             for row in result.all()
         )
+
+    async def all(self):
+
+        result = await self.query(
+            """
+            SELECT
+                command_name,
+                uses
+            FROM command_counters
+            """
+        )
+
+        return sorted(
+            result.all(),
+            key=lambda row: int(
+                row.uses or 0
+            ),
+            reverse=True,
+        )
+
 
 # ============================================================
 # XP EVENTS
@@ -2349,19 +2554,25 @@ class XPRepository(BaseRepository):
                 balance_after,
                 metadata
             )
-            VALUES (?, ?, now(), ?, ?, ?, ?, ?, ?)
+            VALUES (
+                ?, ?, now(), ?, ?, ?, ?, ?, ?
+            )
             """,
             (
                 str(snowflake_id),
                 now.date(),
                 amount,
                 reason,
-                str(guild_id)
-                if guild_id is not None
-                else None,
-                str(channel_id)
-                if channel_id is not None
-                else None,
+                (
+                    str(guild_id)
+                    if guild_id is not None
+                    else None
+                ),
+                (
+                    str(channel_id)
+                    if channel_id is not None
+                    else None
+                ),
                 balance_after,
                 dict(metadata or {}),
             ),
@@ -2375,13 +2586,20 @@ class XPRepository(BaseRepository):
         limit: int = 100,
     ):
 
+        days = max(
+            1,
+            int(days),
+        )
+
+        limit = max(
+            1,
+            int(limit),
+        )
+
         today = utcnow().date()
 
-        start = today.fromordinal(
-            max(
-                1,
-                today.toordinal() - days
-            )
+        start = today - timedelta(
+            days=days
         )
 
         rows = []
@@ -2409,8 +2627,11 @@ class XPRepository(BaseRepository):
                 result.all()
             )
 
-            current = current.fromordinal(
-                current.toordinal() - 1
+            if len(rows) >= limit:
+                break
+
+            current -= timedelta(
+                days=1
             )
 
         return rows[:limit]
@@ -2449,19 +2670,25 @@ class ShameRepository(BaseRepository):
                 guild_id,
                 metadata
             )
-            VALUES (?, ?, now(), ?, ?, ?, ?, ?)
+            VALUES (
+                ?, ?, now(), ?, ?, ?, ?, ?
+            )
             """,
             (
                 str(snowflake_id),
                 now.date(),
                 amount,
                 reason,
-                str(moderator_id)
-                if moderator_id is not None
-                else None,
-                str(guild_id)
-                if guild_id is not None
-                else None,
+                (
+                    str(moderator_id)
+                    if moderator_id is not None
+                    else None
+                ),
+                (
+                    str(guild_id)
+                    if guild_id is not None
+                    else None
+                ),
                 dict(metadata or {}),
             ),
         )
@@ -2480,7 +2707,9 @@ class GuildRepository(BaseRepository):
         name: Optional[str] = None,
     ):
 
-        guild_id = str(guild_id)
+        guild_id = str(
+            guild_id
+        )
 
         existing = await self.one(
             """
@@ -2511,7 +2740,9 @@ class GuildRepository(BaseRepository):
                 updated_at,
                 metadata
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
             """,
             (
                 guild_id,
@@ -2617,9 +2848,9 @@ class SettingsRepository(BaseRepository):
             VALUES (?, ?, ?, ?, ?)
             """,
             (
-                scope,
+                str(scope),
                 str(scope_id),
-                setting,
+                str(setting),
                 json_dumps(value),
                 utcnow(),
             ),
@@ -2642,9 +2873,9 @@ class SettingsRepository(BaseRepository):
             AND setting = ?
             """,
             (
-                scope,
+                str(scope),
                 str(scope_id),
-                setting,
+                str(setting),
             ),
         )
 
@@ -2687,9 +2918,9 @@ class FeatureFlagRepository(BaseRepository):
             VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
-                scope,
+                str(scope),
                 str(scope_id),
-                feature,
+                str(feature),
                 enabled,
                 utcnow(),
                 dict(metadata or {}),
@@ -2713,16 +2944,18 @@ class FeatureFlagRepository(BaseRepository):
             AND feature = ?
             """,
             (
-                scope,
+                str(scope),
                 str(scope_id),
-                feature,
+                str(feature),
             ),
         )
 
         if not row:
             return default
 
-        return bool(row.enabled)
+        return bool(
+            row.enabled
+        )
 
 
 # ============================================================
@@ -2750,9 +2983,9 @@ class CooldownRepository(BaseRepository):
             VALUES (?, ?, ?, ?)
             """,
             (
-                scope,
+                str(scope),
                 str(scope_id),
-                command,
+                str(command),
                 expires_at,
             ),
         )
@@ -2773,9 +3006,9 @@ class CooldownRepository(BaseRepository):
             AND command = ?
             """,
             (
-                scope,
+                str(scope),
                 str(scope_id),
-                command,
+                str(command),
             ),
         )
 
@@ -2795,10 +3028,12 @@ class CooldownRepository(BaseRepository):
         if not row:
             return False
 
-        return (
-            row.expires_at
-            and row.expires_at > utcnow()
-        )
+        expires_at = row.expires_at
+
+        if expires_at is None:
+            return False
+
+        return expires_at > utcnow()
 
 
 # ============================================================
@@ -2834,18 +3069,24 @@ class AuditRepository(BaseRepository):
                 reason,
                 metadata
             )
-            VALUES (?, ?, now(), ?, ?, ?, ?, ?)
+            VALUES (
+                ?, ?, now(), ?, ?, ?, ?, ?
+            )
             """,
             (
                 str(guild_id),
                 now.date(),
-                str(actor_id)
-                if actor_id is not None
-                else None,
+                (
+                    str(actor_id)
+                    if actor_id is not None
+                    else None
+                ),
                 action,
-                str(target_id)
-                if target_id is not None
-                else None,
+                (
+                    str(target_id)
+                    if target_id is not None
+                    else None
+                ),
                 reason,
                 dict(metadata or {}),
             ),
@@ -2853,7 +3094,7 @@ class AuditRepository(BaseRepository):
 
 
 # ============================================================
-# COUNTERS / STATS
+# GLOBAL COUNTERS / STATS
 # ============================================================
 
 class StatsRepository(BaseRepository):
@@ -2863,6 +3104,14 @@ class StatsRepository(BaseRepository):
         stat_name: str,
         amount: int = 1,
     ):
+
+        stat_name = (
+            str(stat_name)
+            .strip()
+        )
+
+        if not stat_name:
+            return
 
         await self.query(
             """
@@ -2888,7 +3137,7 @@ class StatsRepository(BaseRepository):
             WHERE stat_name = ?
             """,
             (
-                stat_name,
+                str(stat_name),
             ),
         )
 
@@ -2903,6 +3152,7 @@ class StatsRepository(BaseRepository):
 # ============================================================
 # GITHUB
 # ============================================================
+
 class GitHubRepository(BaseRepository):
 
     async def register_repository(
@@ -2931,7 +3181,10 @@ class GitHubRepository(BaseRepository):
                 last_checked_at,
                 metadata
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?
+            )
             """,
             (
                 repository,
@@ -3073,10 +3326,6 @@ class GitHubRepository(BaseRepository):
 
         return result.all()
 
-    # ═══════════════════════════════════════════
-    # GitHub Issues / Suggestions
-    # ═══════════════════════════════════════════
-
     async def record_issue(
         self,
         repository: str,
@@ -3092,7 +3341,6 @@ class GitHubRepository(BaseRepository):
             Mapping[str, str]
         ] = None,
     ):
-        """Record a GitHub issue created through the bot."""
 
         await self.query(
             """
@@ -3167,27 +3415,17 @@ class GitHubRepository(BaseRepository):
 
         return result.all()
 
+
 # ============================================================
 # EXTENSION STORAGE
 # ============================================================
 
 class ExtensionRepository(BaseRepository):
     """
-    Generic extension layer.
+    Generic storage layer.
 
-    Useful while developing a feature before creating a dedicated
-    query-oriented table.
-
-    Namespace examples:
-
-        economy
-        gacha
-        aniList
-        library
-        moderation
-        tickets
-        requests
-        reminders
+    Useful for temporary or experimental state before a
+    dedicated query-oriented table is created.
     """
 
     async def set(
@@ -3216,12 +3454,14 @@ class ExtensionRepository(BaseRepository):
                 expires_at,
                 metadata
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?
+            )
             """,
             (
-                namespace,
+                str(namespace),
                 str(entity_id),
-                key,
+                str(key),
                 json_dumps(value),
                 utcnow(),
                 expires_at,
@@ -3246,9 +3486,9 @@ class ExtensionRepository(BaseRepository):
             AND key = ?
             """,
             (
-                namespace,
+                str(namespace),
                 str(entity_id),
-                key,
+                str(key),
             ),
         )
 
@@ -3259,8 +3499,43 @@ class ExtensionRepository(BaseRepository):
             row.value,
             default,
         )
+
+    async def delete(
+        self,
+        namespace: str,
+        entity_id: int | str,
+        key: str,
+    ) -> bool:
+
+        existing = await self.get(
+            namespace,
+            entity_id,
+            key,
+            default=None,
+        )
+
+        if existing is None:
+            return False
+
+        await self.query(
+            """
+            DELETE FROM extension_data
+            WHERE namespace = ?
+            AND entity_id = ?
+            AND key = ?
+            """,
+            (
+                str(namespace),
+                str(entity_id),
+                str(key),
+            ),
+        )
+
+        return True
+
+
 # ============================================================
-# MENTION REPOSITORY
+# MENTIONS
 # ============================================================
 
 class MentionRepository(BaseRepository):
@@ -3273,9 +3548,12 @@ class MentionRepository(BaseRepository):
         message_author_id: int | str,
         channel_id: int | str,
         guild_id: int | str,
-        created_at: Optional[datetime] = None,
+        created_at: Optional[
+            datetime
+        ] = None,
     ) -> None:
-        await self.db.execute(
+
+        await self.query(
             """
             INSERT INTO mentions_by_user (
                 mentioned_id,
@@ -3288,8 +3566,10 @@ class MentionRepository(BaseRepository):
                 channel_id,
                 guild_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """.replace("?", "%s"),
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
             (
                 str(mentioned_id),
                 False,
@@ -3309,23 +3589,31 @@ class MentionRepository(BaseRepository):
         *,
         limit: int = 10,
     ):
-        return await self.db.execute(
+
+        return await self.query(
             """
             SELECT *
             FROM mentions_by_user
             WHERE mentioned_id = ?
-              AND archived = false
-              AND is_read = false
+            AND archived = false
+            AND is_read = false
             LIMIT ?
-            """.replace("?", "%s"),
+            """,
             (
                 str(mentioned_id),
-                limit,
+                max(
+                    1,
+                    int(limit),
+                ),
             ),
         )
 
-    async def mark_read(self, row) -> None:
-        await self.db.execute(
+    async def mark_read(
+        self,
+        row,
+    ) -> None:
+
+        await self.query(
             """
             INSERT INTO mentions_by_user (
                 mentioned_id,
@@ -3338,8 +3626,10 @@ class MentionRepository(BaseRepository):
                 channel_id,
                 guild_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """.replace("?", "%s"),
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
             (
                 row.mentioned_id,
                 bool(row.archived),
@@ -3353,15 +3643,15 @@ class MentionRepository(BaseRepository):
             ),
         )
 
-        await self.db.execute(
+        await self.query(
             """
             DELETE FROM mentions_by_user
             WHERE mentioned_id = ?
-              AND archived = ?
-              AND is_read = ?
-              AND created_at = ?
-              AND id = ?
-            """.replace("?", "%s"),
+            AND archived = ?
+            AND is_read = ?
+            AND created_at = ?
+            AND id = ?
+            """,
             (
                 row.mentioned_id,
                 bool(row.archived),
@@ -3371,81 +3661,125 @@ class MentionRepository(BaseRepository):
             ),
         )
 
-    async def mark_all_read(self, mentioned_id: int | str) -> None:
-        result = await self.unread(
-            mentioned_id,
-            limit=100,
-        )
+    async def mark_all_read(
+        self,
+        mentioned_id: int | str,
+    ) -> None:
 
-        for row in result:
-            await self.mark_read(row)
+        while True:
 
-    async def archive_all(self, mentioned_id: int | str) -> None:
-        result = await self.unread(
-            mentioned_id,
-            limit=100,
-        )
+            result = await self.unread(
+                mentioned_id,
+                limit=100,
+            )
 
-        for row in result:
-            await self.db.execute(
-                """
-                INSERT INTO mentions_by_user (
-                    mentioned_id,
-                    archived,
-                    is_read,
-                    created_at,
-                    id,
-                    message_id,
-                    message_author_id,
-                    channel_id,
-                    guild_id
+            rows = result.all()
+
+            if not rows:
+                break
+
+            for row in rows:
+                await self.mark_read(row)
+
+            if len(rows) < 100:
+                break
+
+    async def archive_all(
+        self,
+        mentioned_id: int | str,
+    ) -> None:
+
+        while True:
+
+            result = await self.unread(
+                mentioned_id,
+                limit=100,
+            )
+
+            rows = result.all()
+
+            if not rows:
+                break
+
+            for row in rows:
+
+                await self.query(
+                    """
+                    INSERT INTO mentions_by_user (
+                        mentioned_id,
+                        archived,
+                        is_read,
+                        created_at,
+                        id,
+                        message_id,
+                        message_author_id,
+                        channel_id,
+                        guild_id
+                    )
+                    VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    """,
+                    (
+                        row.mentioned_id,
+                        True,
+                        bool(row.is_read),
+                        row.created_at,
+                        row.id,
+                        row.message_id,
+                        row.message_author_id,
+                        row.channel_id,
+                        row.guild_id,
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """.replace("?", "%s"),
-                (
-                    row.mentioned_id,
-                    True,
-                    bool(row.is_read),
-                    row.created_at,
-                    row.id,
-                    row.message_id,
-                    row.message_author_id,
-                    row.channel_id,
-                    row.guild_id,
-                ),
-            )
 
-            await self.db.execute(
-                """
-                DELETE FROM mentions_by_user
-                WHERE mentioned_id = ?
-                  AND archived = ?
-                  AND is_read = ?
-                  AND created_at = ?
-                  AND id = ?
-                """.replace("?", "%s"),
-                (
-                    row.mentioned_id,
-                    bool(row.archived),
-                    bool(row.is_read),
-                    row.created_at,
-                    row.id,
-                ),
-            )
-)
+                await self.query(
+                    """
+                    DELETE FROM mentions_by_user
+                    WHERE mentioned_id = ?
+                    AND archived = ?
+                    AND is_read = ?
+                    AND created_at = ?
+                    AND id = ?
+                    """,
+                    (
+                        row.mentioned_id,
+                        bool(row.archived),
+                        bool(row.is_read),
+                        row.created_at,
+                        row.id,
+                    ),
+                )
+
+            if len(rows) < 100:
+                break
+
+
+# ============================================================
+# VARIABLES
+# ============================================================
 
 class VariableRepository(BaseRepository):
-    async def get(self, identifier: str):
-        result = await self.db.execute(
+
+    async def get(
+        self,
+        identifier: str,
+    ):
+
+        return await self.one(
             """
-            SELECT identifier, int_value, string_value, metadata
+            SELECT
+                identifier,
+                int_value,
+                string_value,
+                metadata
             FROM variables
             WHERE identifier = ?
-            """.replace("?", "%s"),
-            (identifier,),
+            """,
+            (
+                str(identifier),
+            ),
         )
-
-        return result.one()
 
     async def set(
         self,
@@ -3453,9 +3787,12 @@ class VariableRepository(BaseRepository):
         *,
         int_value: int | None = None,
         string_value: str | None = None,
-        metadata: dict[str, str] | None = None,
+        metadata: Optional[
+            Mapping[str, str]
+        ] = None,
     ) -> None:
-        await self.db.execute(
+
+        await self.query(
             """
             INSERT INTO variables (
                 identifier,
@@ -3464,12 +3801,12 @@ class VariableRepository(BaseRepository):
                 metadata
             )
             VALUES (?, ?, ?, ?)
-            """.replace("?", "%s"),
+            """,
             (
-                identifier,
+                str(identifier),
                 int_value,
                 string_value,
-                metadata or {},
+                dict(metadata or {}),
             ),
         )
 
@@ -3479,21 +3816,25 @@ class VariableRepository(BaseRepository):
         *,
         int_value: int | None = None,
         string_value: str | None = None,
-        metadata: dict[str, str] | None = None,
+        metadata: Optional[
+            Mapping[str, str]
+        ] = None,
     ) -> None:
-        await self.db.execute(
+
+        await self.query(
             """
             UPDATE variables
-            SET int_value = ?,
+            SET
+                int_value = ?,
                 string_value = ?,
                 metadata = ?
             WHERE identifier = ?
-            """.replace("?", "%s"),
+            """,
             (
                 int_value,
                 string_value,
-                metadata or {},
-                identifier,
+                dict(metadata or {}),
+                str(identifier),
             ),
         )
 
@@ -3503,9 +3844,14 @@ class VariableRepository(BaseRepository):
         *,
         int_value: int | None = None,
         string_value: str | None = None,
-        metadata: dict[str, str] | None = None,
+        metadata: Optional[
+            Mapping[str, str]
+        ] = None,
     ) -> None:
-        existing = await self.get(identifier)
+
+        existing = await self.get(
+            identifier
+        )
 
         if existing is not None:
             return
@@ -3522,17 +3868,87 @@ class VariableRepository(BaseRepository):
         identifier: str,
         default: int = 0,
     ) -> int:
-        row = await self.get(identifier)
 
-        if row is None or row.int_value is None:
+        row = await self.get(
+            identifier
+        )
+
+        if (
+            row is None
+            or row.int_value is None
+        ):
             return default
 
-        return int(row.int_value)
+        return int(
+            row.int_value
+        )
 
+    # ========================================================
+    # MAINTENANCE
+    # ========================================================
+
+    async def set_maintenance(
+        self,
+        enabled: bool,
+        *,
+        reason: str = "",
+        changed_by: int | str | None = None,
+    ) -> None:
+
+        metadata = {
+            "changed_at": (
+                utcnow().isoformat()
+            ),
+        }
+
+        if changed_by is not None:
+
+            metadata["changed_by"] = (
+                str(changed_by)
+            )
+
+        await self.set(
+            "bot_maintenance",
+            int_value=(
+                1
+                if enabled
+                else 0
+            ),
+            string_value=reason.strip(),
+            metadata=metadata,
+        )
+
+    async def get_maintenance(
+        self,
+    ) -> dict[str, Any]:
+
+        row = await self.get(
+            "bot_maintenance"
+        )
+
+        if row is None:
+
+            return {
+                "enabled": False,
+                "reason": "",
+                "metadata": {},
+            }
+
+        return {
+            "enabled": bool(
+                row.int_value or 0
+            ),
+            "reason": (
+                row.string_value or ""
+            ),
+            "metadata": dict(
+                row.metadata or {}
+            ),
+        }
 
 
 # ============================================================
-# GIVEAWAY REPOSITORY
+# GIVEAWAYS
 # ============================================================
 
 class GiveawayRepository(BaseRepository):
@@ -3549,8 +3965,11 @@ class GiveawayRepository(BaseRepository):
         prize: str,
         description: str,
         winners_count: int,
-        created_at,
-        ends_at,
+        created_at: datetime,
+        ends_at: datetime,
+        metadata: Optional[
+            Mapping[str, str]
+        ] = None,
     ):
 
         await self.query(
@@ -3595,11 +4014,13 @@ class GiveawayRepository(BaseRepository):
                 created_at,
                 ends_at,
                 None,
-                {},
+                dict(metadata or {}),
             ),
         )
 
-        bucket = ends_at.strftime("%Y%m%d%H")
+        bucket = ends_at.strftime(
+            "%Y%m%d%H"
+        )
 
         await self.query(
             """
@@ -3679,11 +4100,14 @@ class GiveawayRepository(BaseRepository):
         await self.query(
             """
             UPDATE giveaways
-            SET participant_ids = participant_ids + ?
+            SET participant_ids =
+                participant_ids + ?
             WHERE giveaway_id = ?
             """,
             (
-                {str(user_id)},
+                {
+                    str(user_id)
+                },
                 giveaway_id,
             ),
         )
@@ -3697,11 +4121,31 @@ class GiveawayRepository(BaseRepository):
         await self.query(
             """
             UPDATE giveaways
-            SET participant_ids = participant_ids - ?
+            SET participant_ids =
+                participant_ids - ?
             WHERE giveaway_id = ?
             """,
             (
-                {str(user_id)},
+                {
+                    str(user_id)
+                },
+                giveaway_id,
+            ),
+        )
+
+    async def clear_winners(
+        self,
+        giveaway_id: str,
+    ) -> None:
+
+        await self.query(
+            """
+            UPDATE giveaways
+            SET winner_ids = ?
+            WHERE giveaway_id = ?
+            """,
+            (
+                set(),
                 giveaway_id,
             ),
         )
@@ -3710,26 +4154,40 @@ class GiveawayRepository(BaseRepository):
         self,
         giveaway_id: str,
         winners: set[str],
-    ):
+    ) -> None:
+
+        normalized = {
+            str(user_id)
+            for user_id in winners
+        }
 
         await self.query(
             """
             UPDATE giveaways
-            SET winner_ids = winner_ids + ?
+            SET winner_ids = ?
             WHERE giveaway_id = ?
             """,
             (
-                winners,
+                normalized,
                 giveaway_id,
             ),
         )
 
-    async def end(
+    async def replace_winners(
         self,
         giveaway_id: str,
-        *,
         winners: set[str],
-        ended_at,
+    ) -> None:
+
+        await self.set_winners(
+            giveaway_id,
+            winners,
+        )
+
+    async def update_metadata(
+        self,
+        giveaway_id: str,
+        metadata: Mapping[str, str],
     ):
 
         giveaway = await self.get(
@@ -3739,24 +4197,79 @@ class GiveawayRepository(BaseRepository):
         if not giveaway:
             return None
 
+        existing_metadata = dict(
+            getattr(
+                giveaway,
+                "metadata",
+                None,
+            )
+            or {}
+        )
+
+        existing_metadata.update(
+            {
+                str(key): str(value)
+                for key, value in metadata.items()
+                if value is not None
+            }
+        )
+
+        await self.query(
+            """
+            UPDATE giveaways
+            SET metadata = ?
+            WHERE giveaway_id = ?
+            """,
+            (
+                existing_metadata,
+                giveaway_id,
+            ),
+        )
+
+        return await self.get(
+            giveaway_id
+        )
+
+    async def end(
+        self,
+        giveaway_id: str,
+        *,
+        winners: set[str],
+        ended_at: datetime,
+    ):
+
+        giveaway = await self.get(
+            giveaway_id
+        )
+
+        if not giveaway:
+            return None
+
+        normalized_winners = {
+            str(user_id)
+            for user_id in winners
+        }
+
         await self.query(
             """
             UPDATE giveaways
             SET
                 state = ?,
-                winner_ids = winner_ids + ?,
+                winner_ids = ?,
                 ended_at = ?
             WHERE giveaway_id = ?
             """,
             (
                 "ended",
-                winners,
+                normalized_winners,
                 ended_at,
                 giveaway_id,
             ),
         )
 
-        bucket = giveaway.ends_at.strftime("%Y%m%d%H")
+        bucket = giveaway.ends_at.strftime(
+            "%Y%m%d%H"
+        )
 
         await self.query(
             """
@@ -3833,27 +4346,47 @@ class GiveawayRepository(BaseRepository):
     async def due(
         self,
         *,
-        now,
+        now: Optional[datetime] = None,
         limit: int = 50,
+        hours: int = 24,
     ):
 
-        buckets = {
-            now.strftime("%Y%m%d%H"),
-        }
+        now = now or utcnow()
 
-        previous_hour = now.timestamp() - 3600
-        previous = datetime.fromtimestamp(
-            previous_hour,
-            timezone.utc,
+        limit = max(
+            1,
+            int(limit),
         )
 
-        buckets.add(
-            previous.strftime("%Y%m%d%H")
+        hours = max(
+            1,
+            int(hours),
         )
+
+        buckets = set()
+
+        for offset in range(
+            hours
+        ):
+
+            timestamp = (
+                now
+                - timedelta(
+                    hours=offset
+                )
+            )
+
+            buckets.add(
+                timestamp.strftime(
+                    "%Y%m%d%H"
+                )
+            )
 
         rows = []
 
-        for bucket in buckets:
+        for bucket in sorted(
+            buckets,
+        ):
 
             result = await self.query(
                 """
@@ -3874,15 +4407,49 @@ class GiveawayRepository(BaseRepository):
                 result.all()
             )
 
-        giveaways = []
+            if len(rows) >= limit:
+                break
+
+        # ----------------------------------------------------
+        # DEDUPLICATE
+        # ----------------------------------------------------
+
+        seen = set()
+        giveaway_ids = []
 
         for row in rows:
 
-            giveaway = await self.get(
+            giveaway_id = (
                 row.giveaway_id
             )
 
-            if giveaway:
+            if giveaway_id in seen:
+                continue
+
+            seen.add(
+                giveaway_id
+            )
+
+            giveaway_ids.append(
+                giveaway_id
+            )
+
+            if len(giveaway_ids) >= limit:
+                break
+
+        giveaways = []
+
+        for giveaway_id in giveaway_ids:
+
+            giveaway = await self.get(
+                giveaway_id
+            )
+
+            if (
+                giveaway
+                and giveaway.state == "active"
+                and giveaway.ends_at <= now
+            ):
                 giveaways.append(
                     giveaway
                 )
@@ -3923,7 +4490,9 @@ class CSVImporter:
         for row in rows:
 
             snowflake_id = (
-                row.get("snowflakeid")
+                row.get(
+                    "snowflakeid"
+                )
             )
 
             if not snowflake_id:
@@ -3951,38 +4520,42 @@ class CSVImporter:
                 ):
                     return default
 
-            await self.db.users.update(
-                snowflake_id,
-
-                level=integer(
-                    "level",
-                    1,
-                ),
-
-                required_xp=integer(
-                    "required_xp",
-                    100,
-                ),
-
-                shame_points=integer(
-                    "shame_points",
-                    0,
-                ),
-
-                # Current CSV may contain blank values.
-                #
-                # Start those users at 0 XP.
-
-                metadata={
-                    "migration": "users_lunar.csv"
-                },
+            existing = await self.db.users.get(
+                snowflake_id
             )
 
-            # If the row didn't already exist, create it.
+            if existing:
 
-            if not await self.db.users.exists(
-                snowflake_id
-            ):
+                await self.db.users.update(
+                    snowflake_id,
+
+                    level=integer(
+                        "level",
+                        1,
+                    ),
+
+                    required_xp=integer(
+                        "required_xp",
+                        100,
+                    ),
+
+                    xp=integer(
+                        "xp",
+                        0,
+                    ),
+
+                    shame_points=integer(
+                        "shame_points",
+                        0,
+                    ),
+
+                    metadata={
+                        "migration":
+                        "users_lunar.csv"
+                    },
+                )
+
+            else:
 
                 await self.db.users.create(
                     snowflake_id,
@@ -4006,6 +4579,11 @@ class CSVImporter:
                         "shame_points",
                         0,
                     ),
+
+                    metadata={
+                        "migration":
+                        "users_lunar.csv"
+                    },
                 )
 
             imported += 1
@@ -4013,7 +4591,7 @@ class CSVImporter:
         return imported
 
     # ========================================================
-    # ACCOUNT LINK CSV
+    # ACCOUNT LINKS CSV
     # ========================================================
 
     async def import_account_links(
@@ -4033,11 +4611,15 @@ class CSVImporter:
         for row in rows:
 
             snowflake_id = (
-                row.get("snowflakeid")
+                row.get(
+                    "snowflakeid"
+                )
             )
 
             lunar_uuid = (
-                row.get("lunaruuid")
+                row.get(
+                    "lunaruuid"
+                )
             )
 
             verification_code = (
@@ -4060,11 +4642,16 @@ class CSVImporter:
                     "verified",
                     "False",
                 )
-            ).lower()
+            ).strip().lower()
 
             verified = (
                 raw_verified
-                == "true"
+                in {
+                    "true",
+                    "1",
+                    "yes",
+                    "y",
+                }
             )
 
             last_message_time = None
@@ -4142,15 +4729,19 @@ async def close_database():
 
 
 # ============================================================
-# OPTIONAL CSV CONVENIENCE
+# CSV CONVENIENCE
 # ============================================================
 
 async def import_csv_data(
     users_rows: Optional[
-        Iterable[Mapping[str, str]]
+        Iterable[
+            Mapping[str, str]
+        ]
     ] = None,
     account_rows: Optional[
-        Iterable[Mapping[str, str]]
+        Iterable[
+            Mapping[str, str]
+        ]
     ] = None,
 ):
 
@@ -4184,10 +4775,19 @@ async def import_csv_data(
 
 
 # ============================================================
-# EXTENSION AREA
+# DATABASE EXTENSION GUIDE
 # ============================================================
 #
-# When adding a NEW large system, create a repository.
+# When adding a NEW large system:
+#
+# 1. Create a dedicated table in CORE_SCHEMA.
+#
+# 2. Create a repository class.
+#
+# 3. Add the repository attribute inside
+#    ScyllaDatabase.__init__().
+#
+# 4. Bind it inside _bind_repositories().
 #
 # Example:
 #
@@ -4206,19 +4806,8 @@ async def import_csv_data(
 #     ):
 #         ...
 #
-#
-# Then:
-#
-# 1. Add the table to CORE_SCHEMA.
-#
-# 2. Add the repository attribute inside
-#    ScyllaDatabase.__init__().
-#
-# 3. Bind it inside _bind_repositories().
-#
-#
 # ============================================================
-# POSSIBLE FUTURE MODULES
+# FUTURE MODULES
 # ============================================================
 #
 # Economy
@@ -4319,31 +4908,26 @@ async def import_csv_data(
 # IMPORTANT SCYLLA MODELING RULE
 # ============================================================
 #
-# DO NOT create random secondary indexes every time you need
-# another lookup.
+# Do not create arbitrary secondary indexes for new access
+# patterns.
 #
-# For every important access pattern, prefer a dedicated table.
+# Model tables around the queries you actually need.
 #
 # Example:
 #
-# You need:
+# Need:
 #
 #     Find account by Lunar UUID
 #
-# Instead of:
-#
-#     SELECT ... WHERE lunar_uuid = ?
-#
-# create:
+# Use:
 #
 #     account_links_by_uuid
 #
-# with:
+# rather than:
 #
-#     lunar_uuid text PRIMARY KEY
-#     snowflake_id text
-#     ...
+#     SELECT ... WHERE lunar_uuid = ?
 #
-# This keeps the schema query-oriented and scalable.
+# This keeps the data model query-oriented and scalable.
 #
-# ============================================================
+# ===========================================================
+

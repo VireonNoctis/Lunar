@@ -373,7 +373,81 @@ class CryptographicRandomizer:
         )
 
         counter = 0
+    # ========================================================
+    # SECURE CHOICE
+    # ========================================================
 
+    @classmethod
+    def choose(
+        cls,
+        items: Sequence[str],
+        *,
+        seed: bytes | None = None,
+        context: str = "LUNAR-CHOICE",
+    ) -> tuple[str, str]:
+        """
+        Cryptographically secure selection of one item.
+
+        Returns:
+
+            (selected_item, proof)
+
+        The selection uses the same HMAC-SHA-512 /
+        rejection-sampling pipeline as the giveaway randomizer.
+        """
+
+        if not items:
+            raise ValueError(
+                "items cannot be empty."
+            )
+
+        if seed is None:
+            seed = cls.generate_seed()
+
+        normalized = [
+            str(item).strip()
+            for item in items
+            if str(item).strip()
+        ]
+
+        if not normalized:
+            raise ValueError(
+                "items cannot contain only empty values."
+            )
+
+        context_bytes = (
+            context.encode("utf-8")
+            + b"|"
+            + str(len(normalized)).encode("utf-8")
+        )
+
+        key = cls.derive_key(
+            seed,
+            context_bytes,
+        )
+
+        selected_index, _ = cls.randbelow(
+            key,
+            len(normalized),
+            0,
+        )
+
+        selected = normalized[selected_index]
+
+        proof = hashlib.sha256(
+            cls.algorithm.encode("utf-8")
+            + b"|"
+            + seed
+            + b"|"
+            + context_bytes
+            + b"|"
+            + selected.encode("utf-8")
+        ).hexdigest()
+
+        return (
+            selected,
+            proof,
+        )
         # ----------------------------------------------------
         # Partial Fisher-Yates
         # ----------------------------------------------------

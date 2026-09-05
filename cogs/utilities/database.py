@@ -381,6 +381,56 @@ CORE_SCHEMA: tuple[str, ...] = (
     )
     """,
 
+    
+    # ========================================================
+    # SETTINGS
+    # ========================================================
+    """
+CREATE TABLE IF NOT EXISTS leaderboard_message_hourly (
+    guild_id text,
+    hour_bucket text,
+    user_id text,
+    message_count counter,
+    PRIMARY KEY ((guild_id, hour_bucket), user_id)
+)
+""",
+
+"""
+CREATE TABLE IF NOT EXISTS leaderboard_message_totals (
+    guild_id text,
+    user_id text,
+    message_count counter,
+    PRIMARY KEY ((guild_id), user_id)
+)
+""",
+
+"""
+CREATE TABLE IF NOT EXISTS leaderboard_vc_totals (
+    guild_id text,
+    user_id text,
+    seconds counter,
+    PRIMARY KEY ((guild_id), user_id)
+)
+""",
+
+"""
+CREATE TABLE IF NOT EXISTS leaderboard_vc_active (
+    guild_id text,
+    user_id text,
+    joined_at timestamp,
+    PRIMARY KEY ((guild_id), user_id)
+)
+""",
+
+"""
+CREATE TABLE IF NOT EXISTS leaderboard_sync_state (
+    guild_id text PRIMARY KEY,
+    last_sync_at timestamp,
+    messages_scanned bigint,
+    channels_scanned int,
+    users_discovered int
+)
+""",
     # ========================================================
     # FEATURE FLAGS
     # ========================================================
@@ -975,6 +1025,9 @@ class ScyllaDatabase:
 
         self.giveaways = GiveawayRepository(self)
 
+        self.leaderboard = LeaderboardRepository(self)
+
+        
     # ========================================================
     # PREPARED STATEMENTS
     # ========================================================

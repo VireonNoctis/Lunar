@@ -11,7 +11,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from utilities.database import db
+from cogs.utilities.database import db
 from cogs.utilities.emoji import EMOJI
 from cogs.commands.linkaccount import LinkUsernameModal
 

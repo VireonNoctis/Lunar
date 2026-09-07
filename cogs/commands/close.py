@@ -16,6 +16,13 @@ from cogs.utilities.emoji import EMOJI
 
 FAKE_LOADING_TIME = 1.0
 
+# Channel IDs where the bot automatically joins
+AUTO_JOIN_THREAD_CHANNELS = {
+    1461828648171475158,
+    1391717080348496035,
+    1345359839592845345,
+}
+
 
 # ============================================================
 # CLOSE COG
@@ -30,6 +37,49 @@ class Close(
         bot: commands.Bot,
     ):
         self.bot = bot
+
+    # ========================================================
+    # AUTO JOIN NEW THREADS
+    # ========================================================
+
+    @commands.Cog.listener()
+    async def on_thread_create(
+        self,
+        thread: discord.Thread,
+    ) -> None:
+
+        # ----------------------------------------------------
+        # Parent Channel Check
+        # ----------------------------------------------------
+
+        if thread.parent_id not in AUTO_JOIN_THREAD_CHANNELS:
+            return
+
+        # ----------------------------------------------------
+        # Already Joined Check
+        # ----------------------------------------------------
+
+        me = thread.guild.me
+
+        if me is None:
+            return
+
+        if thread.is_joined():
+            return
+
+        # ----------------------------------------------------
+        # Join Thread
+        # ----------------------------------------------------
+
+        try:
+
+            await thread.join()
+
+        except discord.Forbidden:
+            pass
+
+        except discord.HTTPException:
+            pass
 
     # ========================================================
     # /close

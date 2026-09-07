@@ -20,11 +20,9 @@ log = logging.getLogger("lunar.xp")
 
 LUNAR_XP_API = "https://api.lunarx.to/api/admin/users/give-xp"
 
-# Same channels from your original code.
 XP_LOG_CHANNEL_ID = 1499281835757404250
 XP_EMBED_CHANNEL_ID = 1514345477188092024
 
-# Environment variables used by your original grantXP function.
 LUNAR_BYPASS_TOKEN = os.getenv("bypass_token")
 LUNAR_TOKEN = os.getenv("lunar_token")
 
@@ -526,46 +524,43 @@ class XP(commands.Cog):
 
         # ----------------------------------------------------
         # Embed
-        # ----------------------------------------------------
+        # ----------------------------------------------------       
 
-        embed = discord.Embed(
-            color=0x7C5CFF,
-            description=(
-                "╭─ ✦ **Experience Gained**\n"
-                "│\n"
-                f"│ <a:65270roseblooming:1369250407225884672> "
-                f"**{username}** earned "
-                f"**+{xp_granted} XP**\n"
-                "│\n"
-                f"│ <a:59120white:1369250400401620992> "
-                f"Level: **{new_level}**\n"
-                f"│ <a:59586leftwing:1369250402834583693> "
-                f"Current XP: **{new_xp}**\n"
-                "\n"
-                + (
-                    "│ <a:72687pink:1369250415971012689> "
-                    "**Level Up!**\n"
-                    f"│ :97637pink: **{previous_level}** "
-                    f"➜ **{new_level}**\n"
-                    "│\n"
-                    if leveled_up
-                    else ""
-                )
-                + "╰────────────"
-            ),
-        )
+     embed = discord.Embed(
+    color=0x7C5CFF,
+    description=(
+        f"<a:65270roseblooming:1369250407225884672> "
+        f"**{username}** earned **+{xp_granted} XP**"
+    ),
+)
 
-        if self.bot.user:
-            embed.set_author(
-                name="🌙 Lunar XP",
-                icon_url=self.bot.user.display_avatar.url,
-            )
+if self.bot.user:
+    embed.set_author(
+        name="🌙 Lunar XP",
+        icon_url=self.bot.user.display_avatar.url,
+    )
 
-        embed.set_footer(
-            text="☾ Lunar XP • "
-        )
+embed.add_field(
+    name="<a:59120white:1369250400401620992> Level",
+    value=f"**{new_level}**",
+    inline=True,
+)
 
-        embed.timestamp = discord.utils.utcnow()
+embed.add_field(
+    name="<a:59586leftwing:1369250402834583693> Current XP",
+    value=f"**{new_xp}**",
+    inline=True,
+)
+
+if leveled_up:
+    embed.add_field(
+        name="<a:72687pink:1369250415971012689> Level Up!",
+        value=f":97637pink: **{previous_level}** → **{new_level}**",
+        inline=False,
+    )
+
+embed.set_footer(text="☾ Lunar XP")
+embed.timestamp = discord.utils.utcnow()
 
         # ----------------------------------------------------
         # Send XP embed

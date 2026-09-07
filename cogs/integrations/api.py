@@ -291,164 +291,293 @@ class LunarAPI(commands.Cog):
             "failed": failed,
         }
 
+    
+@staticmethod
+def build_card_embed(
+    card: dict[str, Any],
+) -> discord.Embed:
+    """
+    Build a polished Lunar card embed with the card artwork
+    displayed on the right side.
+    """
+
     # ========================================================
-    # EMBED BUILDER
+    # BASIC INFORMATION
     # ========================================================
 
-    @staticmethod
-    def build_card_embed(
-        card: dict[str, Any],
-    ) -> discord.Embed:
-        """
-        Convert LunarX card JSON into a Discord embed.
-        """
+    name = str(
+        card.get("name", "Unknown Card")
+    )
 
-        name = str(
-            card.get(
-                "name",
-                "Unknown Card",
-            )
-        )
+    rarity = int(
+        card.get("rarity", 0) or 0
+    )
 
-        rarity = card.get(
-            "rarity",
-            0,
-        )
-
-        stars = card.get(
+    stars = str(
+        card.get(
             "stars",
-            "★" * int(rarity or 0),
+            "★" * rarity,
         )
+    )
 
-        role = card.get(
-            "role",
-            card.get(
-                "class",
-                "Unknown",
-            ),
-        )
+    role = str(
+        card.get("role")
+        or card.get("class")
+        or "Unknown"
+    )
 
-        element = card.get(
+    element = str(
+        card.get(
             "element",
             "Unknown",
         )
+    )
 
-        base_attack = card.get(
-            "base_attack",
-            0,
-        )
+    image_url = card.get("image_url")
 
-        base_defense = card.get(
-            "base_defense",
-            0,
-        )
-
-        base_hp = card.get(
-            "base_hp",
-            0,
-        )
-
-        copies = card.get(
-            "copies",
-            0,
-        )
-
-        submitted_by = card.get(
-            "submitted_by",
-            "Unknown",
-        )
-
-        template_id = card.get(
+    template_id = str(
+        card.get(
             "template_id",
             "Unknown",
         )
+    )
 
-        votes = card.get(
+    submitted_by = str(
+        card.get(
+            "submitted_by",
+            "Unknown",
+        )
+    )
+
+    copies = int(
+        card.get(
+            "copies",
+            0,
+        ) or 0
+    )
+
+    votes = int(
+        card.get(
             "votes",
             0,
+        ) or 0
+    )
+
+    # ========================================================
+    # STATS
+    # ========================================================
+
+    attack = int(
+        card.get(
+            "base_attack",
+            0,
+        ) or 0
+    )
+
+    defense = int(
+        card.get(
+            "base_defense",
+            0,
+        ) or 0
+    )
+
+    hp = int(
+        card.get(
+            "base_hp",
+            0,
+        ) or 0
+    )
+
+    # ========================================================
+    # EMBED
+    # ========================================================
+
+    embed = discord.Embed(
+        title=f"{stars}  {name}",
+        description=(
+            f"**{role}**\n"
+            f"**Element:** `{element}`"
+        ),
+        color=discord.Color.gold(),
+    )
+
+    # ========================================================
+    # RIGHT-SIDE CARD ART
+    # ========================================================
+    #
+    # set_thumbnail() places the image on the right side
+    # of the Discord embed.
+    #
+
+    if image_url:
+        embed.set_thumbnail(
+            url=str(image_url)
         )
 
-        embed = discord.Embed(
-            title=f"{stars} {name}",
-            description=(
-                f"**Role:** {role}\n"
-                f"**Element:** {element}\n\n"
-                f"**ATK:** {base_attack}\n"
-                f"**DEF:** {base_defense}\n"
-                f"**HP:** {base_hp}\n"
-            ),
-            color=discord.Color.gold(),
-        )
+    # ========================================================
+    # STATS
+    # ========================================================
 
-        # ----------------------------------------------------
-        # ABILITIES
-        # ----------------------------------------------------
+    embed.add_field(
+        name="⚔️ Attack",
+        value=f"**{attack:,}**",
+        inline=True,
+    )
 
-        abilities = card.get(
-            "abilities",
-            [],
-        )
+    embed.add_field(
+        name="🛡️ Defense",
+        value=f"**{defense:,}**",
+        inline=True,
+    )
 
-        if isinstance(
-            abilities,
-            list,
+    embed.add_field(
+        name="❤️ HP",
+        value=f"**{hp:,}**",
+        inline=True,
+    )
+
+    # ========================================================
+    # CARD INFORMATION
+    # ========================================================
+
+    embed.add_field(
+        name="🌙 Card Information",
+        value=(
+            f"**Rarity:** {stars}\n"
+            f"**Role:** {role}\n"
+            f"**Element:** {element}\n"
+            f"**Template:** `{template_id}`"
+        ),
+        inline=False,
+    )
+
+    # ========================================================
+    # ABILITIES
+    # ========================================================
+
+    abilities = card.get(
+        "abilities",
+        [],
+    )
+
+    if isinstance(
+        abilities,
+        list,
+    ):
+
+        valid_abilities = [
+            ability
+            for ability in abilities
+            if isinstance(
+                ability,
+                dict,
+            )
+        ]
+
+        for index, ability in enumerate(
+            valid_abilities,
+            start=1,
         ):
 
-            for ability in abilities:
-
-                if not isinstance(
-                    ability,
-                    dict,
-                ):
-                    continue
-
-                ability_name = ability.get(
+            ability_name = str(
+                ability.get(
                     "name",
                     "Ability",
                 )
+            )
 
-                ability_description = ability.get(
+            ability_description = str(
+                ability.get(
                     "description",
-                    "No description.",
+                    "No description available.",
                 )
-
-                embed.add_field(
-                    name=str(
-                        ability_name
-                    ),
-                    value=str(
-                        ability_description
-                    ),
-                    inline=False,
-                )
-
-        # ----------------------------------------------------
-        # IMAGE
-        # ----------------------------------------------------
-
-        image_url = card.get(
-            "image_url"
-        )
-
-        if image_url:
-            embed.set_image(
-                url=str(image_url)
             )
 
-        # ----------------------------------------------------
-        # FOOTER
-        # ----------------------------------------------------
+            if len(ability_description) > 1024:
+                ability_description = (
+                    ability_description[:1021]
+                    + "..."
+                )
 
-        embed.set_footer(
-            text=(
-                f"Template: {template_id} • "
-                f"Copies: {copies} • "
-                f"Votes: {votes} • "
-                f"Submitted by: {submitted_by}"
+            # One ability gets a cleaner title.
+            if len(valid_abilities) == 1:
+                field_name = (
+                    f"✨ {ability_name}"
+                )
+            else:
+                field_name = (
+                    f"✨ Ability {index} — "
+                    f"{ability_name}"
+                )
+
+            embed.add_field(
+                name=field_name,
+                value=ability_description,
+                inline=False,
+            )
+
+    # ========================================================
+    # FALLBACK SKILL
+    # ========================================================
+
+    elif card.get("skill_name"):
+
+        skill_name = str(
+            card.get(
+                "skill_name"
             )
         )
 
-        return embed
+        skill_description = str(
+            card.get(
+                "skill_description",
+                "No description available.",
+            )
+        )
+
+        if len(skill_description) > 1024:
+            skill_description = (
+                skill_description[:1021]
+                + "..."
+            )
+
+        embed.add_field(
+            name=f"✨ {skill_name}",
+            value=skill_description,
+            inline=False,
+        )
+
+    # ========================================================
+    # AVAILABILITY
+    # ========================================================
+
+    embed.add_field(
+        name="📦 Availability",
+        value=(
+            f"**Copies:** `{copies:,}`\n"
+            f"**Votes:** `{votes:,}`"
+        ),
+        inline=True,
+    )
+
+    embed.add_field(
+        name="👤 Submitted By",
+        value=f"`{submitted_by}`",
+        inline=True,
+    )
+
+    # ========================================================
+    # FOOTER
+    # ========================================================
+
+    embed.set_footer(
+        text=(
+            f"Lunar • {template_id}"
+        )
+    )
+
+    return embed
+ 
 
     # ========================================================
     # SERVER

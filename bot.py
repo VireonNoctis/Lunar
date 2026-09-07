@@ -13,6 +13,7 @@ from discord.ext import commands, tasks
 
 from utilities.database import db
 from cogs.utilities.emoji import EMOJI
+from cogs.commands.linkaccount import LinkUsernameModal
 
 
 # ============================================================
@@ -218,6 +219,82 @@ async def load_maintenance_state() -> None:
 
 
 # ============================================================
+# ACCOUNT LINK REQUIRED VIEW
+# ============================================================
+
+class LinkRequiredView(discord.ui.View):
+    """
+    Shown when a user attempts to use a command without
+    having a verified Lunar account linked to Discord.
+    """
+
+    def __init__(self):
+        super().__init__(
+            timeout=120
+        )
+
+    @discord.ui.button(
+        label="Link Lunar Account",
+        style=discord.ButtonStyle.primary,
+        emoji="🔗",
+    )
+    async def link_account(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+
+        # Find the already-loaded LinkAccount cog.
+        cog = bot.get_cog("LinkAccount")
+
+        if cog is None:
+            await interaction.response.send_message(
+                (
+                    f"{EMOJI['error']} "
+                    "The account linking system is currently unavailable."
+                ),
+                ephemeral=True,
+            )
+            return
+
+        # Open the exact same modal used by /link.
+        await interaction.response.send_modal(
+            LinkUsernameModal(cog)
+        )
+
+    @discord.ui.button(
+        label="Cancel",
+        style=discord.ButtonStyle.secondary,
+        emoji="✖️",
+    )
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=discord.Embed(
+                title=(
+                    f"{EMOJI['denied']} "
+                    "Action Cancelled"
+                ),
+                description=(
+                    "You must link your Lunar Anime account "
+                    "before you can use this command."
+                ),
+                color=discord.Color.dark_grey(),
+            ),
+            view=None,
+        )
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            item.disabled = True
+
+
+# ============================================================
 # GLOBAL APPLICATION COMMAND CHECK
 # ============================================================
 
@@ -229,11 +306,12 @@ async def global_interaction_check(
     Global gate for every slash command.
 
     Priority:
-
         1. Owners bypass everything.
         2. Developer commands are owner-only.
         3. Maintenance blocks normal commands.
-        4. Otherwise allow execution.
+        4. /link is always accessible.
+        5. User must have a verified Lunar account.
+        6. Otherwise allow execution.
     """
 
     user_id = interaction.user.id
@@ -254,13 +332,23 @@ async def global_interaction_check(
         return True
 
     # --------------------------------------------------------
+    # LINK COMMAND BYPASS
+    # --------------------------------------------------------
+    #
+    # Users obviously need to be able to execute /link
+    # while unlinked, otherwise the system would deadlock.
+    #
+
+    if command_name == "link":
+        return True
+
+    # --------------------------------------------------------
     # DEVELOPER COMMANDS
     # --------------------------------------------------------
 
     if command_name in DEVELOPER_COMMANDS:
 
         try:
-
             await interaction.response.send_message(
                 (
                     f"{EMOJI['denied']} "
@@ -271,7 +359,6 @@ async def global_interaction_check(
             )
 
         except discord.HTTPException:
-
             pass
 
         return False
@@ -296,7 +383,6 @@ async def global_interaction_check(
         )
 
         try:
-
             await interaction.response.send_message(
                 (
                     f"{EMOJI['loading']} "
@@ -308,12 +394,84 @@ async def global_interaction_check(
             )
 
         except discord.HTTPException:
-
             pass
 
         return False
 
+    # --------------------------------------------------------
+    # ACCOUNT LINK CHECK
+    # --------------------------------------------------------
+
+    try:
+        verified = await db.account_links.is_verified(
+            user_id
+        )
+
+    except Exception:
+        logger.exception(
+            "Failed to check account link status for %s.",
+            user_id,
+        )
+
+        try:
+            await interaction.response.send_message(
+                (
+                    f"{EMOJI['error']} "
+                    "**Unable to verify your Lunar account.**\n\n"
+                    "Please try again in a moment."
+                ),
+                ephemeral=True,
+            )
+
+        except discord.HTTPException:
+            pass
+
+        return False
+
+    # --------------------------------------------------------
+    # NOT LINKED
+    # --------------------------------------------------------
+
+    if not verified:
+
+        embed = discord.Embed(
+            title=(
+                f"{EMOJI['denied']} "
+                "Lunar Account Required"
+            ),
+            description=(
+                "You must link and verify your "
+                "**Lunar Anime account** before using "
+                "Lunar commands.\n\n"
+                f"{EMOJI['lunar']} "
+                "Click **Link Lunar Account** below to "
+                "start the linking process."
+            ),
+            color=discord.Color.blurple(),
+        )
+
+        embed.set_footer(
+            text="Lunar Account Verification"
+        )
+
+        try:
+            await interaction.response.send_message(
+                embed=embed,
+                view=LinkRequiredView(),
+                ephemeral=True,
+            )
+
+        except discord.HTTPException:
+            pass
+
+        return False
+
+    # --------------------------------------------------------
+    # ALLOW
+    # --------------------------------------------------------
+
     return True
+
 
 
 # ============================================================

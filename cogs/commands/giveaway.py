@@ -1,4 +1,4 @@
-from __future__ import annotations
+  from __future__ import annotations
 
 import asyncio
 import json
@@ -12,6 +12,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from cogs.commands.linkaccount import LinkUsernameModal
 from cogs.utilities.database import db
 from cogs.utilities.emoji import EMOJI
 from cogs.utilities.randomizer import (
@@ -21,18 +22,30 @@ from cogs.utilities.randomizer import (
 
 log = logging.getLogger("lunar.giveaway")
 
+
+# ============================================================
+# CONFIG
+# ============================================================
+
 MAX_WINNERS = 100
 MAX_PRIZE_LENGTH = 200
 MAX_DESCRIPTION_LENGTH = 1500
 MAX_DURATION_SECONDS = 365 * 86400
-FAKE_LOADING_SECONDS = 1.25
+FAKE_LOADING_SECONDS = 1.5
 
+
+# ============================================================
+# HELPERS
+# ============================================================
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def parse_duration(value: str) -> Optional[int]:
+def parse_duration(
+    value: str,
+) -> Optional[int]:
+
     value = value.strip().lower()
 
     if not value:
@@ -49,44 +62,74 @@ def parse_duration(value: str) -> Optional[int]:
     number = ""
 
     for char in value:
+
         if not char.isdigit():
             break
+
         number += char
 
     if not number:
         return None
 
-    unit = value[len(number):]
-    multiplier = units.get(unit)
+    unit = value[
+        len(number):
+    ]
+
+    multiplier = units.get(
+        unit
+    )
 
     if multiplier is None:
         return None
 
-    seconds = int(number) * multiplier
+    seconds = (
+        int(number)
+        * multiplier
+    )
 
-    if seconds <= 0 or seconds > MAX_DURATION_SECONDS:
+    if (
+        seconds <= 0
+        or seconds > MAX_DURATION_SECONDS
+    ):
         return None
 
     return seconds
 
 
-def format_duration(seconds: int) -> str:
+def format_duration(
+    seconds: int,
+) -> str:
+
     if seconds % 604800 == 0:
-        return f"{seconds // 604800} week(s)"
+        return (
+            f"{seconds // 604800} week(s)"
+        )
 
     if seconds % 86400 == 0:
-        return f"{seconds // 86400} day(s)"
+        return (
+            f"{seconds // 86400} day(s)"
+        )
 
     if seconds % 3600 == 0:
-        return f"{seconds // 3600} hour(s)"
+        return (
+            f"{seconds // 3600} hour(s)"
+        )
 
     if seconds % 60 == 0:
-        return f"{seconds // 60} minute(s)"
+        return (
+            f"{seconds // 60} minute(s)"
+        )
 
-    return f"{seconds} second(s)"
+    return (
+        f"{seconds} second(s)"
+    )
 
 
-def mention_users(user_ids: list[str] | tuple[str, ...]) -> str:
+def mention_users(
+    user_ids: list[str]
+    | tuple[str, ...],
+) -> str:
+
     if not user_ids:
         return "No winners."
 
@@ -96,26 +139,58 @@ def mention_users(user_ids: list[str] | tuple[str, ...]) -> str:
     )
 
 
-def parse_metadata(value: Any) -> dict[str, Any]:
+def parse_metadata(
+    value: Any,
+) -> dict[str, Any]:
+
     if not value:
         return {}
 
-    if isinstance(value, dict):
+    if isinstance(
+        value,
+        dict,
+    ):
         return dict(value)
 
     try:
-        parsed = json.loads(str(value))
-    except (TypeError, ValueError, json.JSONDecodeError):
+
+        parsed = json.loads(
+            str(value)
+        )
+
+    except (
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ):
+
         return {}
 
-    return parsed if isinstance(parsed, dict) else {}
+    if isinstance(
+        parsed,
+        dict,
+    ):
+
+        return parsed
+
+    return {}
 
 
-def normalize_ids(values: Any) -> list[str]:
+def normalize_ids(
+    values: Any,
+) -> list[str]:
+
     if values is None:
         return []
 
-    if isinstance(values, (str, bytes)):
+    if isinstance(
+        values,
+        (
+            str,
+            bytes,
+        ),
+    ):
+
         values = [values]
 
     return sorted(
@@ -127,32 +202,73 @@ def normalize_ids(values: Any) -> list[str]:
     )
 
 
+# ============================================================
+# GIVEAWAY STATE
+# ============================================================
+
 @dataclass(slots=True)
 class GiveawayState:
+
     giveaway_id: str
+
     guild_id: str
+
     channel_id: str
+
     message_id: Optional[str]
+
     host_id: str
+
     prize: str
+
     description: str
+
     winner_count: int
+
     duration_seconds: int
+
     ends_at: str
-    participants: list[str] = field(default_factory=list)
+
+    participants: list[str] = field(
+        default_factory=list
+    )
+
     seed_hex: Optional[str] = None
+
     commitment: Optional[str] = None
-    randomizer_version: str = CryptographicRandomizer.algorithm
+
+    randomizer_version: str = (
+        CryptographicRandomizer.algorithm
+    )
+
     ended: bool = False
+
     deleted: bool = False
+
     round_number: int = 1
-    last_result: Optional[dict[str, Any]] = None
-    draw_history: list[dict[str, Any]] = field(default_factory=list)
+
+    last_result: Optional[
+        dict[str, Any]
+    ] = None
+
+    draw_history: list[
+        dict[str, Any]
+    ] = field(
+        default_factory=list
+    )
 
     @classmethod
-    def from_row(cls, row: Any) -> "GiveawayState":
+    def from_row(
+        cls,
+        row: Any,
+    ) -> "GiveawayState":
+
         metadata = parse_metadata(
-            getattr(row, "metadata", None)
+            getattr(
+                row,
+                "metadata",
+                None,
+            )
         )
 
         ended = (
@@ -274,7 +390,9 @@ class GiveawayState:
             participants=participants,
             seed_hex=(
                 str(
-                    metadata["seed_hex"]
+                    metadata[
+                        "seed_hex"
+                    ]
                 )
                 if metadata.get(
                     "seed_hex"
@@ -283,7 +401,9 @@ class GiveawayState:
             ),
             commitment=(
                 str(
-                    metadata["commitment"]
+                    metadata[
+                        "commitment"
+                    ]
                 )
                 if metadata.get(
                     "commitment"
@@ -334,11 +454,22 @@ class GiveawayState:
             ),
         )
 
-    def metadata(self) -> dict[str, str]:
+    def metadata(
+        self,
+    ) -> dict[str, str]:
+
         return {
-            "seed_hex": self.seed_hex or "",
-            "commitment": self.commitment or "",
-            "randomizer_version": self.randomizer_version,
+            "seed_hex": (
+                self.seed_hex
+                or ""
+            ),
+            "commitment": (
+                self.commitment
+                or ""
+            ),
+            "randomizer_version": (
+                self.randomizer_version
+            ),
             "round_number": str(
                 self.round_number
             ),
@@ -350,7 +481,8 @@ class GiveawayState:
                         ":",
                     ),
                 )
-                if self.last_result is not None
+                if self.last_result
+                is not None
                 else ""
             ),
             "draw_history": json.dumps(
@@ -363,18 +495,29 @@ class GiveawayState:
         }
 
 
-class GiveawayEntryView(discord.ui.View):
+# ============================================================
+# GIVEAWAY ENTRY VIEW
+# ============================================================
+
+class GiveawayEntryView(
+    discord.ui.View
+):
+
     def __init__(
         self,
         cog: "Giveaway",
         giveaway_id: str,
-    ):
+    ) -> None:
+
         super().__init__(
             timeout=None
         )
 
         self.cog = cog
-        self.giveaway_id = giveaway_id
+
+        self.giveaway_id = (
+            giveaway_id
+        )
 
         button = discord.ui.Button(
             label="Enter Giveaway",
@@ -388,20 +531,254 @@ class GiveawayEntryView(discord.ui.View):
 
         button.callback = self.enter
 
-        self.add_item(button)
+        self.add_item(
+            button
+        )
 
     async def enter(
         self,
         interaction: discord.Interaction,
     ) -> None:
+
         await self.cog.handle_entry(
             interaction,
             self.giveaway_id,
         )
 
 
-class GiveawayEndedView(discord.ui.View):
-    def __init__(self):
+# ============================================================
+# LINKING MODAL
+# ============================================================
+
+class GiveawayLinkUsernameModal(
+    LinkUsernameModal
+):
+
+    def __init__(
+        self,
+        link_cog: commands.Cog,
+        giveaway_cog: "Giveaway",
+        giveaway_id: str,
+    ) -> None:
+
+        super().__init__(
+            link_cog
+        )
+
+        self.link_cog = (
+            link_cog
+        )
+
+        self.giveaway_cog = (
+            giveaway_cog
+        )
+
+        self.giveaway_id = (
+            giveaway_id
+        )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction,
+    ) -> None:
+
+        username = str(
+            self.username.value
+        ).strip()
+
+        await interaction.response.defer(
+            ephemeral=True
+        )
+
+        try:
+
+            await self.link_cog.start_link(
+                interaction,
+                username,
+            )
+
+        except Exception:
+
+            log.exception(
+                "Giveaway account-link flow failed for %s.",
+                interaction.user.id,
+            )
+
+            return
+
+        self.giveaway_cog.watch_link_completion(
+            interaction,
+            interaction.user.id,
+            self.giveaway_id,
+        )
+
+
+# ============================================================
+# LINK ACCOUNT VIEW
+# ============================================================
+
+class GiveawayLinkView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        giveaway_cog: "Giveaway",
+        giveaway_id: str,
+    ) -> None:
+
+        super().__init__(
+            timeout=300
+        )
+
+        self.giveaway_cog = (
+            giveaway_cog
+        )
+
+        self.giveaway_id = (
+            giveaway_id
+        )
+
+        self.owner_id: Optional[int] = None
+
+    @discord.ui.button(
+        label="Link Lunar Account",
+        emoji="🔗",
+        style=discord.ButtonStyle.primary,
+    )
+    async def link(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+
+        if self.owner_id is None:
+
+            self.owner_id = (
+                interaction.user.id
+            )
+
+        if (
+            interaction.user.id
+            != self.owner_id
+        ):
+
+            await interaction.response.send_message(
+                f"{EMOJI['denied']} "
+                "This linking prompt belongs to another user.",
+                ephemeral=True,
+            )
+
+            return
+
+        cog = interaction.client.get_cog(
+            "LinkAccount"
+        )
+
+        if cog is None:
+
+            await interaction.response.send_message(
+                f"{EMOJI['error']} "
+                "The Lunar account linking system is currently unavailable. "
+                "Please try `/link` later.",
+                ephemeral=True,
+            )
+
+            return
+
+        if not isinstance(
+            cog,
+            commands.Cog,
+        ):
+
+            await interaction.response.send_message(
+                f"{EMOJI['error']} "
+                "The Lunar account linking system is unavailable.",
+                ephemeral=True,
+            )
+
+            return
+
+        await interaction.response.send_modal(
+            GiveawayLinkUsernameModal(
+                cog,
+                self.giveaway_cog,
+                self.giveaway_id,
+            )
+        )
+
+
+# ============================================================
+# ENTER AFTER LINK VIEW
+# ============================================================
+
+class GiveawayEnterAfterLinkView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        giveaway_cog: "Giveaway",
+        giveaway_id: str,
+        user_id: int,
+    ) -> None:
+
+        super().__init__(
+            timeout=300
+        )
+
+        self.giveaway_cog = (
+            giveaway_cog
+        )
+
+        self.giveaway_id = (
+            giveaway_id
+        )
+
+        self.user_id = (
+            user_id
+        )
+
+    @discord.ui.button(
+        label="Enter Giveaway",
+        emoji=EMOJI["gift"],
+        style=discord.ButtonStyle.success,
+    )
+    async def enter(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+
+        if (
+            interaction.user.id
+            != self.user_id
+        ):
+
+            await interaction.response.send_message(
+                f"{EMOJI['denied']} "
+                "This button belongs to another user.",
+                ephemeral=True,
+            )
+
+            return
+
+        await self.giveaway_cog.handle_entry(
+            interaction,
+            self.giveaway_id,
+        )
+
+
+# ============================================================
+# ENDED VIEW
+# ============================================================
+
+class GiveawayEndedView(
+    discord.ui.View
+):
+
+    def __init__(self) -> None:
+
         super().__init__(
             timeout=None
         )
@@ -417,53 +794,75 @@ class GiveawayEndedView(discord.ui.View):
         )
 
 
-class GiveawayCreateModal(discord.ui.Modal):
+# ============================================================
+# CREATE MODAL
+# ============================================================
+
+class GiveawayCreateModal(
+    discord.ui.Modal
+):
+
     def __init__(
         self,
         cog: "Giveaway",
         author_id: int,
-    ):
+    ) -> None:
+
         super().__init__(
             title="Create Giveaway"
         )
 
         self.cog = cog
-        self.author_id = author_id
 
-        self.duration_input = discord.ui.TextInput(
-            label="Duration",
-            placeholder="Examples: 30m, 2h, 3d, 1w",
-            min_length=2,
-            max_length=12,
-            required=True,
+        self.author_id = (
+            author_id
         )
 
-        self.winners_input = discord.ui.TextInput(
-            label="Number of Winners",
-            placeholder="Example: 3",
-            min_length=1,
-            max_length=3,
-            required=True,
+        self.duration_input = (
+            discord.ui.TextInput(
+                label="Duration",
+                placeholder=(
+                    "Examples: 30m, 2h, 3d, 1w"
+                ),
+                min_length=2,
+                max_length=12,
+                required=True,
+            )
         )
 
-        self.prize_input = discord.ui.TextInput(
-            label="Prize",
-            placeholder="Example: 1,000,000 Coins",
-            min_length=1,
-            max_length=MAX_PRIZE_LENGTH,
-            required=True,
+        self.winners_input = (
+            discord.ui.TextInput(
+                label="Number of Winners",
+                placeholder="Example: 3",
+                min_length=1,
+                max_length=3,
+                required=True,
+            )
         )
 
-        self.description_input = discord.ui.TextInput(
-            label="Description",
-            placeholder=(
-                "Explain the giveaway and any "
-                "important details."
-            ),
-            style=discord.TextStyle.paragraph,
-            min_length=1,
-            max_length=MAX_DESCRIPTION_LENGTH,
-            required=True,
+        self.prize_input = (
+            discord.ui.TextInput(
+                label="Prize",
+                placeholder=(
+                    "Example: 1,000,000 Coins"
+                ),
+                min_length=1,
+                max_length=MAX_PRIZE_LENGTH,
+                required=True,
+            )
+        )
+
+        self.description_input = (
+            discord.ui.TextInput(
+                label="Description",
+                placeholder=(
+                    "Explain the giveaway and any important details."
+                ),
+                style=discord.TextStyle.paragraph,
+                min_length=1,
+                max_length=MAX_DESCRIPTION_LENGTH,
+                required=True,
+            )
         )
 
         self.add_item(
@@ -486,18 +885,27 @@ class GiveawayCreateModal(discord.ui.Modal):
         self,
         interaction: discord.Interaction,
     ) -> None:
-        if interaction.user.id != self.author_id:
+
+        if (
+            interaction.user.id
+            != self.author_id
+        ):
+
             await interaction.response.send_message(
                 "This giveaway form belongs to another user.",
                 ephemeral=True,
             )
+
             return
 
-        duration_seconds = parse_duration(
-            self.duration_input.value
+        duration_seconds = (
+            parse_duration(
+                self.duration_input.value
+            )
         )
 
         if duration_seconds is None:
+
             await interaction.response.send_message(
                 (
                     "Invalid duration. Use "
@@ -507,46 +915,64 @@ class GiveawayCreateModal(discord.ui.Modal):
                 ),
                 ephemeral=True,
             )
+
             return
 
         try:
+
             winner_count = int(
                 self.winners_input.value.strip()
             )
+
         except ValueError:
+
             await interaction.response.send_message(
                 "Winner count must be a whole number.",
                 ephemeral=True,
             )
+
             return
 
-        if not 1 <= winner_count <= MAX_WINNERS:
+        if not (
+            1
+            <= winner_count
+            <= MAX_WINNERS
+        ):
+
             await interaction.response.send_message(
                 (
-                    f"Winner count must be between "
-                    f"1 and {MAX_WINNERS}."
+                    "Winner count must be "
+                    f"between 1 and {MAX_WINNERS}."
                 ),
                 ephemeral=True,
             )
+
             return
 
-        prize = self.prize_input.value.strip()
+        prize = (
+            self.prize_input.value.strip()
+        )
+
         description = (
             self.description_input.value.strip()
         )
 
         if not prize:
+
             await interaction.response.send_message(
                 "Prize cannot be empty.",
                 ephemeral=True,
             )
+
             return
 
         if not description:
+
             await interaction.response.send_message(
                 "Description cannot be empty.",
                 ephemeral=True,
             )
+
             return
 
         await interaction.response.send_message(
@@ -569,7 +995,14 @@ class GiveawayCreateModal(discord.ui.Modal):
         )
 
 
-class GiveawayConfirmView(discord.ui.View):
+# ============================================================
+# CREATE CONFIRM VIEW
+# ============================================================
+
+class GiveawayConfirmView(
+    discord.ui.View
+):
+
     def __init__(
         self,
         *,
@@ -579,27 +1012,47 @@ class GiveawayConfirmView(discord.ui.View):
         winner_count: int,
         prize: str,
         description: str,
-    ):
+    ) -> None:
+
         super().__init__(
             timeout=120
         )
 
         self.cog = cog
-        self.author_id = author_id
-        self.duration_seconds = duration_seconds
-        self.winner_count = winner_count
+
+        self.author_id = (
+            author_id
+        )
+
+        self.duration_seconds = (
+            duration_seconds
+        )
+
+        self.winner_count = (
+            winner_count
+        )
+
         self.prize = prize
-        self.description = description
+
+        self.description = (
+            description
+        )
 
     async def interaction_check(
         self,
         interaction: discord.Interaction,
     ) -> bool:
-        if interaction.user.id != self.author_id:
+
+        if (
+            interaction.user.id
+            != self.author_id
+        ):
+
             await interaction.response.send_message(
                 "Only the giveaway creator can use these buttons.",
                 ephemeral=True,
             )
+
             return False
 
         return True
@@ -614,6 +1067,7 @@ class GiveawayConfirmView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ) -> None:
+
         button.disabled = True
 
         await interaction.response.edit_message(
@@ -637,15 +1091,19 @@ class GiveawayConfirmView(discord.ui.View):
         )
 
         try:
-            state = await self.cog.create_giveaway(
-                interaction=interaction,
-                duration_seconds=self.duration_seconds,
-                winner_count=self.winner_count,
-                prize=self.prize,
-                description=self.description,
+
+            state = (
+                await self.cog.create_giveaway(
+                    interaction=interaction,
+                    duration_seconds=self.duration_seconds,
+                    winner_count=self.winner_count,
+                    prize=self.prize,
+                    description=self.description,
+                )
             )
 
         except Exception:
+
             log.exception(
                 "Failed to create giveaway"
             )
@@ -657,8 +1115,8 @@ class GiveawayConfirmView(discord.ui.View):
                         "Giveaway Creation Failed"
                     ),
                     description=(
-                        "The giveaway could not be "
-                        "published. Nothing was left active."
+                        "The giveaway could not be published. "
+                        "Nothing was left active."
                     ),
                     color=discord.Color.red(),
                 ),
@@ -700,13 +1158,16 @@ class GiveawayConfirmView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ) -> None:
+
         await interaction.response.edit_message(
             embed=discord.Embed(
                 title=(
                     f"{EMOJI['denied']} "
                     "Giveaway Cancelled"
                 ),
-                description="No giveaway was created.",
+                description=(
+                    "No giveaway was created."
+                ),
                 color=discord.Color.red(),
             ),
             view=None,
@@ -714,20 +1175,33 @@ class GiveawayConfirmView(discord.ui.View):
 
         self.stop()
 
-    async def on_timeout(self) -> None:
+    async def on_timeout(
+        self,
+    ) -> None:
+
         for child in self.children:
+
             if isinstance(
                 child,
                 discord.ui.Button,
             ):
+
                 child.disabled = True
 
 
-class Giveaway(commands.Cog):
+# ============================================================
+# GIVEAWAY COG
+# ============================================================
+
+class Giveaway(
+    commands.Cog
+):
+
     def __init__(
         self,
         bot: commands.Bot,
-    ):
+    ) -> None:
+
         self.bot = bot
 
         self._active: dict[
@@ -740,18 +1214,28 @@ class Giveaway(commands.Cog):
             asyncio.Lock,
         ] = {}
 
+        self._link_watchers: dict[
+            int,
+            asyncio.Task[None],
+        ] = {}
+
         self._restored = False
 
         self.expiry_loop.start()
 
-    def cog_unload(self) -> None:
+    def cog_unload(
+        self,
+    ) -> None:
+
         self.expiry_loop.cancel()
 
     @property
     def repository(self):
+
         repository = db.giveaways
 
         if repository is None:
+
             raise RuntimeError(
                 "Giveaway repository is not initialized."
             )
@@ -762,31 +1246,43 @@ class Giveaway(commands.Cog):
         self,
         giveaway_id: str,
     ) -> asyncio.Lock:
+
         lock = self._locks.get(
             giveaway_id
         )
 
         if lock is None:
+
             lock = asyncio.Lock()
-            self._locks[giveaway_id] = lock
+
+            self._locks[
+                giveaway_id
+            ] = lock
 
         return lock
 
-    async def cog_load(self) -> None:
+    async def cog_load(
+        self,
+    ) -> None:
+
         await self.restore_active_giveaways()
 
     async def restore_active_giveaways(
         self,
     ) -> None:
+
         if db.giveaways is None:
+
             log.error(
                 "Giveaway repository is not initialized during restore."
             )
+
             return
 
         restored = 0
 
         try:
+
             result = await db.query(
                 """
                 SELECT *
@@ -799,22 +1295,32 @@ class Giveaway(commands.Cog):
             now = utcnow()
 
             for row in result.all():
-                state = GiveawayState.from_row(
-                    row
+
+                state = (
+                    GiveawayState.from_row(
+                        row
+                    )
                 )
 
                 try:
-                    ends_at = datetime.fromisoformat(
-                        state.ends_at
+
+                    ends_at = (
+                        datetime.fromisoformat(
+                            state.ends_at
+                        )
                     )
+
                 except ValueError:
+
                     log.error(
                         "Invalid expiration for restored giveaway %s",
                         state.giveaway_id,
                     )
+
                     continue
 
                 if ends_at <= now:
+
                     continue
 
                 self._active[
@@ -822,6 +1328,7 @@ class Giveaway(commands.Cog):
                 ] = state
 
                 if state.message_id:
+
                     self.bot.add_view(
                         GiveawayEntryView(
                             self,
@@ -835,9 +1342,11 @@ class Giveaway(commands.Cog):
                 restored += 1
 
         except Exception:
+
             log.exception(
                 "Failed to restore active giveaways from Scylla."
             )
+
             return
 
         self._restored = True
@@ -852,18 +1361,24 @@ class Giveaway(commands.Cog):
         giveaway_id: str,
         *,
         refresh: bool = False,
-    ) -> Optional[GiveawayState]:
+    ) -> Optional[
+        GiveawayState
+    ]:
+
         giveaway_id = str(
             giveaway_id
         ).strip()
 
         if not giveaway_id:
+
             return None
 
         if (
             not refresh
-            and giveaway_id in self._active
+            and giveaway_id
+            in self._active
         ):
+
             cached = self._active[
                 giveaway_id
             ]
@@ -872,6 +1387,7 @@ class Giveaway(commands.Cog):
                 not cached.ended
                 and not cached.deleted
             ):
+
                 return cached
 
         row = await self.repository.get(
@@ -879,14 +1395,18 @@ class Giveaway(commands.Cog):
         )
 
         if row is None:
+
             self._active.pop(
                 giveaway_id,
                 None,
             )
+
             return None
 
-        state = GiveawayState.from_row(
-            row
+        state = (
+            GiveawayState.from_row(
+                row
+            )
         )
 
         self._active[
@@ -898,10 +1418,16 @@ class Giveaway(commands.Cog):
     async def resolve_identifier(
         self,
         identifier: str,
-    ) -> Optional[GiveawayState]:
-        identifier = identifier.strip()
+    ) -> Optional[
+        GiveawayState
+    ]:
+
+        identifier = (
+            identifier.strip()
+        )
 
         if not identifier:
+
             return None
 
         state = await self.load(
@@ -910,20 +1436,27 @@ class Giveaway(commands.Cog):
         )
 
         if state is not None:
+
             return state
 
         if not identifier.isdigit():
+
             return None
 
-        row = await self.repository.get_by_message(
-            identifier
+        row = await (
+            self.repository.get_by_message(
+                identifier
+            )
         )
 
         if row is None:
+
             return None
 
-        state = GiveawayState.from_row(
-            row
+        state = (
+            GiveawayState.from_row(
+                row
+            )
         )
 
         self._active[
@@ -936,6 +1469,7 @@ class Giveaway(commands.Cog):
         self,
         state: GiveawayState,
     ) -> None:
+
         await self.repository.update_metadata(
             state.giveaway_id,
             state.metadata(),
@@ -954,20 +1488,34 @@ class Giveaway(commands.Cog):
         prize: str,
         description: str,
     ) -> GiveawayState:
+
         if (
-            interaction.guild is None
-            or interaction.channel_id is None
+            interaction.guild
+            is None
+            or interaction.channel_id
+            is None
         ):
+
             raise ValueError(
                 "Giveaways can only be created in a server channel."
             )
 
-        if not 1 <= winner_count <= MAX_WINNERS:
+        if not (
+            1
+            <= winner_count
+            <= MAX_WINNERS
+        ):
+
             raise ValueError(
                 "Invalid winner count."
             )
 
-        if not 1 <= duration_seconds <= MAX_DURATION_SECONDS:
+        if not (
+            1
+            <= duration_seconds
+            <= MAX_DURATION_SECONDS
+        ):
+
             raise ValueError(
                 "Invalid giveaway duration."
             )
@@ -1005,7 +1553,9 @@ class Giveaway(commands.Cog):
             host_id=str(
                 interaction.user.id
             ),
-            prize=prize[:MAX_PRIZE_LENGTH],
+            prize=prize[
+                :MAX_PRIZE_LENGTH
+            ],
             description=description[
                 :MAX_DESCRIPTION_LENGTH
             ],
@@ -1025,6 +1575,7 @@ class Giveaway(commands.Cog):
             channel,
             discord.abc.Messageable,
         ):
+
             raise ValueError(
                 "This channel cannot receive giveaway messages."
             )
@@ -1038,7 +1589,9 @@ class Giveaway(commands.Cog):
                 self,
                 giveaway_id,
             ),
-            allowed_mentions=discord.AllowedMentions.none(),
+            allowed_mentions=(
+                discord.AllowedMentions.none()
+            ),
         )
 
         state.message_id = str(
@@ -1050,25 +1603,34 @@ class Giveaway(commands.Cog):
         )
 
         try:
+
             await self.repository.create(
                 giveaway_id=state.giveaway_id,
                 message_id=message.id,
                 channel_id=channel.id,
                 guild_id=interaction.guild.id,
                 host_id=interaction.user.id,
-                duration_seconds=state.duration_seconds,
+                duration_seconds=(
+                    state.duration_seconds
+                ),
                 prize=state.prize,
                 description=state.description,
-                winners_count=state.winner_count,
+                winners_count=(
+                    state.winner_count
+                ),
                 created_at=utcnow(),
                 ends_at=ends_at,
                 metadata=state.metadata(),
             )
 
         except Exception:
+
             try:
+
                 await message.delete()
+
             except discord.HTTPException:
+
                 log.exception(
                     "Could not remove orphaned giveaway message %s",
                     message.id,
@@ -1090,22 +1652,29 @@ class Giveaway(commands.Cog):
         winner_count: int,
         round_number: int,
     ) -> RandomSelection:
+
         if not state.seed_hex:
+
             raise RuntimeError(
                 "Giveaway is missing its cryptographic seed."
             )
 
         if not participants:
+
             raise ValueError(
                 "No eligible participants."
             )
 
         if winner_count <= 0:
+
             raise ValueError(
                 "Winner count must be greater than zero."
             )
 
-        if winner_count > len(participants):
+        if winner_count > len(
+            participants
+        ):
+
             raise ValueError(
                 "Not enough eligible participants."
             )
@@ -1114,9 +1683,16 @@ class Giveaway(commands.Cog):
             seed=bytes.fromhex(
                 state.seed_hex
             ),
-            giveaway_id=state.giveaway_id,
-            guild_id=state.guild_id,
-            message_id=state.message_id or "",
+            giveaway_id=(
+                state.giveaway_id
+            ),
+            guild_id=(
+                state.guild_id
+            ),
+            message_id=(
+                state.message_id
+                or ""
+            ),
             participants=participants,
             winner_count=winner_count,
             round_number=round_number,
@@ -1130,6 +1706,7 @@ class Giveaway(commands.Cog):
         eligible_participants: list[str],
         round_number: int,
     ) -> dict[str, Any]:
+
         payload = {
             "round_number": round_number,
             "winners": list(
@@ -1144,10 +1721,14 @@ class Giveaway(commands.Cog):
             "winner_count": len(
                 result.winners
             ),
-            "commitment": result.commitment,
+            "commitment": (
+                result.commitment
+            ),
             "proof": result.proof,
             "algorithm": result.algorithm,
-            "generated_at": utcnow().isoformat(),
+            "generated_at": (
+                utcnow().isoformat()
+            ),
         }
 
         state.last_result = payload
@@ -1158,6 +1739,88 @@ class Giveaway(commands.Cog):
 
         return payload
 
+  def watch_link_completion(
+        self,
+        interaction: discord.Interaction,
+        user_id: int,
+        giveaway_id: str,
+    ) -> None:
+        previous = self._link_watchers.get(user_id)
+        if previous is not None and not previous.done():
+            previous.cancel()
+
+        task = asyncio.create_task(
+            self._wait_for_link_completion(
+                interaction,
+                user_id,
+                giveaway_id,
+            ),
+            name=f"giveaway-link-watch-{user_id}",
+        )
+        self._link_watchers[user_id] = task
+
+        def cleanup(done_task: asyncio.Task[None]) -> None:
+            current = self._link_watchers.get(user_id)
+            if current is done_task:
+                self._link_watchers.pop(user_id, None)
+
+        task.add_done_callback(cleanup)
+
+    async def _wait_for_link_completion(
+        self,
+        interaction: discord.Interaction,
+        user_id: int,
+        giveaway_id: str,
+    ) -> None:
+        try:
+            deadline = asyncio.get_running_loop().time() + 600
+
+            while asyncio.get_running_loop().time() < deadline:
+                try:
+                    verified = await db.account_links.is_verified(
+                        user_id
+                    )
+                except Exception:
+                    log.exception(
+                        "Failed checking Lunar verification for %s.",
+                        user_id,
+                    )
+                    return
+
+                if verified:
+                    embed = discord.Embed(
+                        title=f"{EMOJI['approved']} Lunar Account Verified",
+                        description=(
+                            f"{EMOJI['lunar']} Your Lunar Anime account is now **linked and verified**.\n\n"
+                            f"{EMOJI['gift']} You can now participate in the giveaway you were trying to enter.\n\n"
+                            "Press **Enter Giveaway** below to continue."
+                        ),
+                        color=discord.Color.green(),
+                        timestamp=utcnow(),
+                    )
+
+                    try:
+                        await interaction.followup.send(
+                            embed=embed,
+                            view=GiveawayEnterAfterLinkView(
+                                self,
+                                giveaway_id,
+                                user_id,
+                            ),
+                            ephemeral=True,
+                        )
+                    except discord.HTTPException:
+                        log.exception(
+                            "Failed sending post-link giveaway confirmation for %s.",
+                            user_id,
+                        )
+                    return
+
+                await asyncio.sleep(3)
+
+        except asyncio.CancelledError:
+            raise
+
     async def handle_entry(
         self,
         interaction: discord.Interaction,
@@ -1165,87 +1828,104 @@ class Giveaway(commands.Cog):
     ) -> None:
         if interaction.guild_id is None:
             await interaction.response.send_message(
-                (
-                    f"{EMOJI['error']} "
-                    "Giveaways can only be entered in a server."
-                ),
+                f"{EMOJI['error']} Giveaways can only be entered in a server.",
                 ephemeral=True,
             )
             return
 
-        lock = self.get_lock(
-            giveaway_id
-        )
-
+        lock = self.get_lock(giveaway_id)
         async with lock:
-            state = await self.load(
-                giveaway_id,
-                refresh=True,
-            )
-
+            state = await self.load(giveaway_id, refresh=True)
             if state is None or state.deleted:
                 await interaction.response.send_message(
-                    (
-                        f"{EMOJI['error']} "
-                        "This giveaway no longer exists."
-                    ),
+                    f"{EMOJI['error']} This giveaway no longer exists.",
                     ephemeral=True,
                 )
                 return
 
-            if state.guild_id != str(
-                interaction.guild_id
-            ):
+            if state.guild_id != str(interaction.guild_id):
+                await interaction.response.send_message(
+                    f"{EMOJI['error']} This giveaway belongs to another server.",
+                    ephemeral=True,
+                )
+                return
+
+            # ------------------------------------------------
+            # VERIFIED LUNAR ACCOUNT CHECK
+            # ------------------------------------------------
+
+            try:
+                verified = await db.account_links.is_verified(
+                    interaction.user.id
+                )
+
+            except Exception:
+                log.exception(
+                    "Failed to check Lunar account verification for %s.",
+                    interaction.user.id,
+                )
+
                 await interaction.response.send_message(
                     (
                         f"{EMOJI['error']} "
-                        "This giveaway belongs to another server."
+                        "I couldn't verify your Lunar account right now. "
+                        "Please try again in a moment."
                     ),
                     ephemeral=True,
                 )
+
+                return
+
+            if not verified:
+                link_cog = self.bot.get_cog("LinkAccount")
+
+                view = None
+                if link_cog is not None:
+                    view = GiveawayLinkView(
+                        self,
+                        giveaway_id,
+                    )
+
+                await interaction.response.send_message(
+                    (
+                        f"{EMOJI['denied']} "
+                        "You must link and verify your **Lunar Anime account** "
+                        "before you can participate in giveaways.\n\n"
+                        f"{EMOJI['lunar']} "
+                        "Use the button below to start the Lunar account "
+                        "linking process."
+                    ),
+                    ephemeral=True,
+                    view=view,
+                )
+
                 return
 
             if state.ended:
                 await interaction.response.send_message(
-                    (
-                        f"{EMOJI['denied']} "
-                        "This giveaway has already ended."
-                    ),
+                    f"{EMOJI['denied']} This giveaway has already ended.",
                     ephemeral=True,
                 )
                 return
 
             try:
-                ends_at = datetime.fromisoformat(
-                    state.ends_at
-                )
+                ends_at = datetime.fromisoformat(state.ends_at)
             except ValueError:
                 await interaction.response.send_message(
-                    (
-                        f"{EMOJI['error']} "
-                        "This giveaway has an invalid expiration time."
-                    ),
+                    f"{EMOJI['error']} This giveaway has an invalid expiration time.",
                     ephemeral=True,
                 )
                 return
 
             if ends_at <= utcnow():
                 await interaction.response.send_message(
-                    (
-                        f"{EMOJI['denied']} "
-                        "This giveaway has expired."
-                    ),
+                    f"{EMOJI['denied']} This giveaway has expired.",
                     ephemeral=True,
                 )
                 return
 
-            user_id = str(
-                interaction.user.id
-            )
-
-            participants = set(
-                state.participants
-            )
+            user_id = str(interaction.user.id)
+            participants = set(state.participants)
 
             try:
                 if user_id in participants:
@@ -1253,26 +1933,17 @@ class Giveaway(commands.Cog):
                         state.giveaway_id,
                         user_id,
                     )
-
-                    participants.remove(
-                        user_id
-                    )
-
+                    participants.remove(user_id)
                     message_text = (
                         f"{EMOJI['denied']} "
                         "You left the giveaway."
                     )
-
                 else:
                     await self.repository.add_entry(
                         state.giveaway_id,
                         user_id,
                     )
-
-                    participants.add(
-                        user_id
-                    )
-
+                    participants.add(user_id)
                     message_text = (
                         f"{EMOJI['approved']} "
                         "You entered the giveaway. Good luck!"
@@ -1294,9 +1965,7 @@ class Giveaway(commands.Cog):
 
                 return
 
-            state.participants = sorted(
-                participants
-            )
+            state.participants = sorted(participants)
 
             self._active[
                 state.giveaway_id
@@ -1365,7 +2034,9 @@ class Giveaway(commands.Cog):
         )
 
     @tasks.loop(seconds=15)
-    async def expiry_loop(self) -> None:
+    async def expiry_loop(
+        self,
+    ) -> None:
         if db.giveaways is None:
             return
 
@@ -1374,6 +2045,7 @@ class Giveaway(commands.Cog):
         for giveaway_id, state in list(
             self._active.items()
         ):
+
             if state.deleted or state.ended:
                 continue
 
@@ -1381,6 +2053,7 @@ class Giveaway(commands.Cog):
                 ends_at = datetime.fromisoformat(
                     state.ends_at
                 )
+
             except ValueError:
                 log.error(
                     "Invalid expiration for giveaway %s",
@@ -1389,6 +2062,7 @@ class Giveaway(commands.Cog):
                 continue
 
             if ends_at <= now:
+
                 try:
                     await self.finish_giveaway(
                         giveaway_id
@@ -1404,6 +2078,7 @@ class Giveaway(commands.Cog):
     async def before_expiry_loop(
         self,
     ) -> None:
+
         await self.bot.wait_until_ready()
 
         while db.giveaways is None:
@@ -1413,11 +2088,13 @@ class Giveaway(commands.Cog):
         self,
         giveaway_id: str,
     ) -> Optional[RandomSelection]:
+
         lock = self.get_lock(
             giveaway_id
         )
 
         async with lock:
+
             state = await self.load(
                 giveaway_id,
                 refresh=True,
@@ -1437,6 +2114,7 @@ class Giveaway(commands.Cog):
             state.participants = participants
 
             if not participants:
+
                 state.ended = True
 
                 await self.repository.end(
@@ -1480,9 +2158,7 @@ class Giveaway(commands.Cog):
 
             await self.repository.end(
                 state.giveaway_id,
-                winners=set(
-                    result.winners
-                ),
+                winners=set(result.winners),
                 ended_at=utcnow(),
             )
 
@@ -1505,11 +2181,13 @@ class Giveaway(commands.Cog):
         self,
         state: GiveawayState,
     ) -> None:
+
         lock = self.get_lock(
             state.giveaway_id
         )
 
         async with lock:
+
             current = await self.load(
                 state.giveaway_id,
                 refresh=True,
@@ -1524,10 +2202,8 @@ class Giveaway(commands.Cog):
                 int(state.channel_id)
             )
 
-            if (
-                channel is not None
-                and state.message_id
-            ):
+            if channel is not None and state.message_id:
+
                 try:
                     message = await channel.fetch_message(
                         int(state.message_id)
@@ -1563,6 +2239,7 @@ class Giveaway(commands.Cog):
         state: GiveawayState,
         amount: int,
     ) -> RandomSelection:
+
         if not state.ended:
             raise ValueError(
                 "Giveaway has not ended."
@@ -1586,6 +2263,7 @@ class Giveaway(commands.Cog):
         previous_winners: set[str] = set()
 
         for history in state.draw_history:
+
             previous_winners.update(
                 normalize_ids(
                     history.get(
@@ -1596,9 +2274,7 @@ class Giveaway(commands.Cog):
             )
 
         eligible = sorted(
-            set(
-                state.participants
-            )
+            set(state.participants)
             - previous_winners
         )
 
@@ -1609,28 +2285,23 @@ class Giveaway(commands.Cog):
 
         if amount > len(eligible):
             raise ValueError(
-                (
-                    f"Only {len(eligible)} "
-                    "eligible participant(s) remain."
-                )
+                f"Only {len(eligible)} eligible participant(s) remain."
             )
 
-        next_round = (
-            max(
-                (
-                    int(
-                        entry.get(
-                            "round_number",
-                            1,
-                        )
-                        or 1
+        next_round = max(
+            (
+                int(
+                    entry.get(
+                        "round_number",
+                        1,
                     )
-                    for entry in state.draw_history
-                ),
-                default=1,
-            )
-            + 1
-        )
+                    or 1
+                )
+                for entry
+                in state.draw_history
+            ),
+            default=1,
+        ) + 1
 
         result = self.draw(
             state,
@@ -1663,11 +2334,9 @@ class Giveaway(commands.Cog):
         prize: str,
         description: str,
     ) -> discord.Embed:
+
         embed = discord.Embed(
-            title=(
-                f"{EMOJI['gift']} "
-                "Giveaway Preview"
-            ),
+            title=f"{EMOJI['gift']} Giveaway Preview",
             description=description,
             color=discord.Color.blurple(),
         )
@@ -1688,9 +2357,7 @@ class Giveaway(commands.Cog):
 
         embed.add_field(
             name="Winners",
-            value=str(
-                winner_count
-            ),
+            value=str(winner_count),
             inline=True,
         )
 
@@ -1712,6 +2379,7 @@ class Giveaway(commands.Cog):
         *,
         participant_count: Optional[int] = None,
     ) -> discord.Embed:
+
         ends_at = datetime.fromisoformat(
             state.ends_at
         )
@@ -1729,12 +2397,9 @@ class Giveaway(commands.Cog):
             ),
             description=(
                 f"{state.description}\n\n"
-                f"{EMOJI['staff']} "
-                f"**Host:** <@{state.host_id}>\n"
-                f"{EMOJI['yellowstar']} "
-                f"**Winners:** `{state.winner_count}`\n"
-                f"{EMOJI['loading']} "
-                f"**Ends:** "
+                f"{EMOJI['staff']} **Host:** <@{state.host_id}>\n"
+                f"{EMOJI['yellowstar']} **Winners:** `{state.winner_count}`\n"
+                f"{EMOJI['loading']} **Ends:** "
                 f"<t:{int(ends_at.timestamp())}:R>\n"
                 f"👥 **Entries:** `{count:,}`\n\n"
                 "Press **Enter Giveaway** below to join."
@@ -1780,11 +2445,9 @@ class Giveaway(commands.Cog):
         state: GiveawayState,
         result: RandomSelection,
     ) -> discord.Embed:
+
         embed = discord.Embed(
-            title=(
-                f"{EMOJI['gift']} "
-                "Giveaway Results"
-            ),
+            title=f"{EMOJI['gift']} Giveaway Results",
             description=(
                 f"Congratulations "
                 f"{mention_users(list(result.winners))}!\n\n"
@@ -1838,7 +2501,7 @@ class Giveaway(commands.Cog):
             text=(
                 f"Giveaway ID: "
                 f"{state.giveaway_id} "
-                "• Use /gverify to verify"
+                f"• Use /gverify to verify"
             )
         )
 
@@ -1849,11 +2512,9 @@ class Giveaway(commands.Cog):
         state: GiveawayState,
         result: RandomSelection,
     ) -> discord.Embed:
+
         embed = discord.Embed(
-            title=(
-                f"{EMOJI['gift']} "
-                "Giveaway Reroll"
-            ),
+            title=f"{EMOJI['gift']} Giveaway Reroll",
             description=(
                 f"New winner(s): "
                 f"{mention_users(list(result.winners))}\n\n"
@@ -1899,11 +2560,13 @@ class Giveaway(commands.Cog):
         *,
         result: Optional[RandomSelection],
     ) -> None:
+
         channel = self.bot.get_channel(
             int(state.channel_id)
         )
 
         if channel is None:
+
             try:
                 channel = await self.bot.fetch_channel(
                     int(state.channel_id)
@@ -1937,6 +2600,7 @@ class Giveaway(commands.Cog):
         )
 
         if state.message_id:
+
             try:
                 message = await channel.fetch_message(
                     int(state.message_id)
@@ -1951,12 +2615,14 @@ class Giveaway(commands.Cog):
                 )
 
             except discord.NotFound:
+
                 log.warning(
                     "Giveaway message %s was not found",
                     state.message_id,
                 )
 
             except discord.HTTPException:
+
                 log.exception(
                     "Failed to update ended giveaway %s",
                     state.giveaway_id,
@@ -1987,11 +2653,14 @@ class Giveaway(commands.Cog):
         self,
         interaction: discord.Interaction,
     ) -> None:
+
         if interaction.guild is None:
+
             await interaction.response.send_message(
                 "Giveaways can only be created inside a server.",
                 ephemeral=True,
             )
+
             return
 
         await interaction.response.send_modal(
@@ -2008,7 +2677,9 @@ class Giveaway(commands.Cog):
         ),
     )
     @app_commands.describe(
-        giveaway="Giveaway ID or Discord message ID."
+        giveaway=(
+            "Giveaway ID or Discord message ID."
+        )
     )
     @app_commands.default_permissions(
         manage_guild=True
@@ -2021,6 +2692,7 @@ class Giveaway(commands.Cog):
         interaction: discord.Interaction,
         giveaway: str,
     ) -> None:
+
         await interaction.response.defer(
             ephemeral=True
         )
@@ -2030,13 +2702,13 @@ class Giveaway(commands.Cog):
         )
 
         if state is None:
+
             await interaction.followup.send(
-                (
-                    f"{EMOJI['error']} "
-                    "No giveaway found."
-                ),
+                f"{EMOJI['error']} "
+                "No giveaway found.",
                 ephemeral=True,
             )
+
             return
 
         await self.delete_giveaway(
@@ -2066,7 +2738,9 @@ class Giveaway(commands.Cog):
         ),
     )
     @app_commands.describe(
-        giveaway="Giveaway ID or Discord message ID."
+        giveaway=(
+            "Giveaway ID or Discord message ID."
+        )
     )
     @app_commands.default_permissions(
         manage_guild=True
@@ -2079,6 +2753,7 @@ class Giveaway(commands.Cog):
         interaction: discord.Interaction,
         giveaway: str,
     ) -> None:
+
         await interaction.response.defer(
             ephemeral=True
         )
@@ -2088,23 +2763,23 @@ class Giveaway(commands.Cog):
         )
 
         if state is None:
+
             await interaction.followup.send(
-                (
-                    f"{EMOJI['error']} "
-                    "No giveaway found."
-                ),
+                f"{EMOJI['error']} "
+                "No giveaway found.",
                 ephemeral=True,
             )
+
             return
 
         if state.ended:
+
             await interaction.followup.send(
-                (
-                    f"{EMOJI['denied']} "
-                    "That giveaway has already ended."
-                ),
+                f"{EMOJI['denied']} "
+                "That giveaway has already ended.",
                 ephemeral=True,
             )
+
             return
 
         await interaction.edit_original_response(
@@ -2127,11 +2802,13 @@ class Giveaway(commands.Cog):
         )
 
         try:
+
             result = await self.finish_giveaway(
                 state.giveaway_id
             )
 
         except Exception:
+
             log.exception(
                 "Failed to manually end giveaway %s",
                 state.giveaway_id,
@@ -2163,10 +2840,8 @@ class Giveaway(commands.Cog):
                     f"**Giveaway ID:** "
                     f"`{state.giveaway_id}`\n\n"
                     + (
-                        (
-                            f"Winners: "
-                            f"{mention_users(list(result.winners))}"
-                        )
+                        f"Winners: "
+                        f"{mention_users(list(result.winners))}"
                         if result is not None
                         else "No participants entered."
                     )
@@ -2208,6 +2883,7 @@ class Giveaway(commands.Cog):
             ]
         ] = None,
     ) -> None:
+
         await interaction.response.defer(
             ephemeral=True
         )
@@ -2217,28 +2893,27 @@ class Giveaway(commands.Cog):
         )
 
         if state is None:
+
             await interaction.followup.send(
-                (
-                    f"{EMOJI['error']} "
-                    "No giveaway found for that message ID."
-                ),
+                f"{EMOJI['error']} "
+                "No giveaway found for that message ID.",
                 ephemeral=True,
             )
+
             return
 
         if not state.ended:
+
             await interaction.followup.send(
-                (
-                    f"{EMOJI['denied']} "
-                    "That giveaway has not ended yet."
-                ),
+                f"{EMOJI['denied']} "
+                "That giveaway has not ended yet.",
                 ephemeral=True,
             )
+
             return
 
         requested_amount = int(
-            amount
-            or state.winner_count
+            amount or state.winner_count
         )
 
         lock = self.get_lock(
@@ -2246,7 +2921,9 @@ class Giveaway(commands.Cog):
         )
 
         try:
+
             async with lock:
+
                 state = await self.load(
                     state.giveaway_id,
                     refresh=True,
@@ -2263,28 +2940,27 @@ class Giveaway(commands.Cog):
                 )
 
         except ValueError as exc:
+
             await interaction.followup.send(
-                (
-                    f"{EMOJI['error']} "
-                    f"{exc}"
-                ),
+                f"{EMOJI['error']} {exc}",
                 ephemeral=True,
             )
+
             return
 
         except Exception:
+
             log.exception(
                 "Reroll failed for giveaway %s",
                 state.giveaway_id,
             )
 
             await interaction.followup.send(
-                (
-                    f"{EMOJI['error']} "
-                    "The reroll failed."
-                ),
+                f"{EMOJI['error']} "
+                "The reroll failed.",
                 ephemeral=True,
             )
+
             return
 
         channel = self.bot.get_channel(
@@ -2292,6 +2968,7 @@ class Giveaway(commands.Cog):
         )
 
         if channel is not None:
+
             await channel.send(
                 embed=self.build_reroll_embed(
                     state,
@@ -2326,17 +3003,21 @@ class Giveaway(commands.Cog):
     @app_commands.command(
         name="gverify",
         description=(
-            "Verify a completed giveaway's cryptographic result."
+            "Verify a completed giveaway's "
+            "cryptographic result."
         ),
     )
     @app_commands.describe(
-        giveaway="Giveaway ID or Discord message ID."
+        giveaway=(
+            "Giveaway ID or Discord message ID."
+        )
     )
     async def gverify(
         self,
         interaction: discord.Interaction,
         giveaway: str,
     ) -> None:
+
         await interaction.response.defer(
             ephemeral=True
         )
@@ -2352,13 +3033,13 @@ class Giveaway(commands.Cog):
             or not state.seed_hex
             or not state.message_id
         ):
+
             await interaction.followup.send(
-                (
-                    f"{EMOJI['error']} "
-                    "No completed verifiable giveaway was found."
-                ),
+                f"{EMOJI['error']} "
+                "No completed verifiable giveaway was found.",
                 ephemeral=True,
             )
+
             return
 
         result = state.last_result
@@ -2394,6 +3075,7 @@ class Giveaway(commands.Cog):
         )
 
         try:
+
             valid = CryptographicRandomizer.verify(
                 seed=bytes.fromhex(
                     state.seed_hex
@@ -2423,6 +3105,7 @@ class Giveaway(commands.Cog):
             ValueError,
             TypeError,
         ) as exc:
+
             await interaction.followup.send(
                 embed=discord.Embed(
                     title=(
@@ -2430,16 +3113,18 @@ class Giveaway(commands.Cog):
                         "Verification Failed"
                     ),
                     description=(
-                        "The stored draw could not be verified.\n\n"
-                        f"`{exc}`"
+                        "The stored draw could not be verified."
+                        f"\n\n`{exc}`"
                     ),
                     color=discord.Color.red(),
                 ),
                 ephemeral=True,
             )
+
             return
 
         if valid:
+
             embed = discord.Embed(
                 title=(
                     f"{EMOJI['approved']} "
@@ -2447,13 +3132,14 @@ class Giveaway(commands.Cog):
                 ),
                 description=(
                     "The stored seed, participant set, "
-                    "winner set, commitment, and proof are "
-                    "consistent with the recorded draw."
+                    "winner set, commitment, and proof "
+                    "are consistent with the recorded draw."
                 ),
                 color=discord.Color.green(),
             )
 
         else:
+
             embed = discord.Embed(
                 title=(
                     f"{EMOJI['error']} "
@@ -2468,35 +3154,26 @@ class Giveaway(commands.Cog):
 
         embed.add_field(
             name="Giveaway",
-            value=(
-                f"`{state.giveaway_id}`"
-            ),
+            value=f"`{state.giveaway_id}`",
             inline=False,
         )
 
         embed.add_field(
             name="Round",
-            value=str(
-                round_number
-            ),
+            value=str(round_number),
             inline=True,
         )
 
         embed.add_field(
             name="Winners",
-            value=str(
-                winner_count
-            ),
+            value=str(winner_count),
             inline=True,
         )
 
         embed.add_field(
             name="Algorithm",
             value=(
-                f"`{result.get(
-                    'algorithm',
-                    state.randomizer_version
-                )}`"
+                f"`{result.get('algorithm', state.randomizer_version)}`"
             ),
             inline=True,
         )
@@ -2510,6 +3187,7 @@ class Giveaway(commands.Cog):
 async def setup(
     bot: commands.Bot,
 ) -> None:
+
     await bot.add_cog(
         Giveaway(bot)
     )

@@ -1,0 +1,11 @@
+{
+  "name": "lunar",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "cd dashboard/frontend && npm run dev",
+    "build": "cd dashboard/frontend && npm run build",
+    "preview": "cd dashboard/frontend && npm run preview",
+    "lint": "cd dashboard/frontend && npm run lint"
+  }
+}

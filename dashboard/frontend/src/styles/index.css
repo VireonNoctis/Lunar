@@ -1,0 +1,95 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --lunar-bg: #f8fafc;
+    --lunar-surface: #ffffff;
+    --lunar-border: #e2e8f0;
+    --lunar-text: #0f172a;
+    --lunar-muted: #64748b;
+  }
+
+  .dark {
+    --lunar-bg: #0b0f1a;
+    --lunar-surface: #111827;
+    --lunar-border: #1e293b;
+    --lunar-text: #f1f5f9;
+    --lunar-muted: #94a3b8;
+  }
+
+  body {
+    background-color: var(--lunar-bg);
+    color: var(--lunar-text);
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-gray-200 dark:border-gray-800
+      bg-white dark:bg-gray-900 shadow-sm;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2
+      px-4 py-2 rounded-lg font-medium text-sm
+      bg-lunar-600 hover:bg-lunar-700 text-white
+      focus:outline-none focus:ring-2 focus:ring-lunar-500 focus:ring-offset-2
+      dark:focus:ring-offset-gray-900
+      disabled:opacity-50 disabled:cursor-not-allowed
+      transition-colors duration-150;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2
+      px-4 py-2 rounded-lg font-medium text-sm
+      bg-gray-100 hover:bg-gray-200 text-gray-700
+      dark:bg-gray-800 dark:hover:bg-gray-700 dark:text-gray-200
+      focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2
+      dark:focus:ring-offset-gray-900
+      disabled:opacity-50 disabled:cursor-not-allowed
+      transition-colors duration-150;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2
+      px-4 py-2 rounded-lg font-medium text-sm
+      bg-red-600 hover:bg-red-700 text-white
+      focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2
+      dark:focus:ring-offset-gray-900
+      disabled:opacity-50 disabled:cursor-not-allowed
+      transition-colors duration-150;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-gray-300 dark:border-gray-700
+      bg-white dark:bg-gray-800 px-3 py-2 text-sm
+      text-gray-900 dark:text-gray-100 placeholder-gray-400
+      focus:outline-none focus:ring-2 focus:ring-lunar-500 focus:border-transparent
+      transition-colors duration-150;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}

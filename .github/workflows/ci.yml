@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install frontend dependencies
+        working-directory: dashboard/frontend
+        run: npm ci
+
+      - name: Lint frontend
+        working-directory: dashboard/frontend
+        run: npm run lint
+
+  build-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        working-directory: dashboard/frontend
+        run: npm ci
+
+      - name: Type check
+        working-directory: dashboard/frontend
+        run: npx tsc -b --noEmit
+
+      - name: Build frontend
+        working-directory: dashboard/frontend
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: dashboard/frontend/dist
+
+  test-backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: lunar_test
+          POSTGRES_USER: lunar
+          POSTGRES_PASSWORD: lunar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install backend dependencies
+        run: pip install -r dashboard/backend/requirements.txt pytest httpx
+
+      - name: Run backend tests
+        env:
+          DATABASE_URL: postgresql+psycopg2://lunar:lunar@localhost:5432/lunar_test
+          REDIS_URL: redis://localhost:6379/0
+        run: pytest dashboard/backend/tests/ -v
+
+  build-docker:
+    runs-on: ubuntu-latest
+    needs: [build-frontend, test-backend]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t lunar-backend -f dashboard/backend/Dockerfile .
+
+      - name: Build frontend image
+        run: docker build -t lunar-frontend -f dashboard/frontend/Dockerfile ./dashboard/frontend
+
+      - name: Build bot image
+        run: docker build -t lunar-bot -f Dockerfile.bot .

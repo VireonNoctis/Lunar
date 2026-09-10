@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+dashboard/frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Temp / test launchers
+.bot_boot.py
+.bot_launcher.py
+.verify_*.py
+
+# Logs
+*.log
+/tmp/

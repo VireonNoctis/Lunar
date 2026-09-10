@@ -1,0 +1,117 @@
+{
+  "tmusic": {
+    "cogs": ["cogs.commands.tmusic"],
+    "description": "Music playback commands",
+    "toggle_maintenance": false
+  },
+  "anime": {
+    "cogs": ["cogs.commands.anime"],
+    "description": "Anime search and recommendations",
+    "toggle_maintenance": false
+  },
+  "giveaway": {
+    "cogs": ["cogs.commands.giveaway"],
+    "description": "Giveaway management system",
+    "toggle_maintenance": false
+  },
+  "modmail": {
+    "cogs": ["cogs.commands.modmail", "cogs.integrations.modmail"],
+    "description": "Moderation mail system",
+    "toggle_maintenance": false
+  },
+  "counting": {
+    "cogs": ["cogs.integrations.counting"],
+    "description": "Counting game in channels",
+    "toggle_maintenance": false
+  },
+  "xp": {
+    "cogs": ["cogs.integrations.xp"],
+    "description": "XP and leveling system",
+    "toggle_maintenance": false
+  },
+  "leaderboard": {
+    "cogs": ["cogs.commands.leaderboard"],
+    "description": "XP and level leaderboard",
+    "toggle_maintenance": false
+  },
+  "search": {
+    "cogs": ["cogs.commands.search"],
+    "description": "Web search commands",
+    "toggle_maintenance": false
+  },
+  "suggest": {
+    "cogs": ["cogs.commands.suggest"],
+    "description": "Suggestion system",
+    "toggle_maintenance": false
+  },
+  "fun": {
+    "cogs": ["cogs.commands.fun", "cogs.commands.coinflip", "cogs.commands.dadjoke", "cogs.commands.randommeme"],
+    "description": "Fun commands collection",
+    "toggle_maintenance": false
+  },
+  "interactions": {
+    "cogs": ["cogs.commands.interactions"],
+    "description": "Interaction commands",
+    "toggle_maintenance": false
+  },
+  "channel": {
+    "cogs": ["cogs.commands.channel"],
+    "description": "Channel management commands",
+    "toggle_maintenance": false
+  },
+  "inbox": {
+    "cogs": ["cogs.commands.inbox"],
+    "description": "Inbox/messaging system",
+    "toggle_maintenance": false
+  },
+  "close": {
+    "cogs": ["cogs.commands.close"],
+    "description": "Close ticket/channel",
+    "toggle_maintenance": false
+  },
+  "steal": {
+    "cogs": ["cogs.commands.steal"],
+    "description": "Emoji stealing commands",
+    "toggle_maintenance": false
+  },
+  "about": {
+    "cogs": ["cogs.commands.about"],
+    "description": "About/info commands",
+    "toggle_maintenance": false
+  },
+  "linkaccount": {
+    "cogs": ["cogs.commands.linkaccount"],
+    "description": "Account linking system",
+    "toggle_maintenance": false
+  },
+  "collectionreply": {
+    "cogs": ["cogs.integrations.collectionreply"],
+    "description": "Collection reply system",
+    "toggle_maintenance": false
+  },
+  "generatecode": {
+    "cogs": ["cogs.integrations.generatecode"],
+    "description": "Code generation",
+    "toggle_maintenance": false
+  },
+  "github": {
+    "cogs": ["cogs.integrations.github"],
+    "description": "GitHub integration",
+    "toggle_maintenance": false
+  },
+  "staffguide": {
+    "cogs": ["cogs.integrations.staffguide"],
+    "description": "Staff guide system",
+    "toggle_maintenance": false
+  },
+  "akinator": {
+    "cogs": ["cogs.commands.akinator"],
+    "description": "Akinator game",
+    "toggle_maintenance": false
+  },
+  "maintenance": {
+    "cogs": [],
+    "description": "Global maintenance mode",
+    "toggle_maintenance": true
+  }
+}

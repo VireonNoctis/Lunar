@@ -6,8 +6,8 @@ import aiohttp
 import discord
 from discord.ext import commands, tasks
 
-from ..utilities.database import db
-from ..utilities.emoji import EMOJI
+from cogs.utilities.database import db
+from cogs.utilities.emoji import EMOJI
 
 
 # ============================================================

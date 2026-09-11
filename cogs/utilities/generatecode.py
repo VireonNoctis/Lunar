@@ -1,5 +1,5 @@
-import random
-import time
+import secrets
+import string
 
 from discord.ext import commands
 
@@ -10,35 +10,26 @@ class GenerateCode(commands.Cog):
 
     @staticmethod
     def generate_code(username: str, lunarname: str) -> str:
-        random_number = int(
-            ((random.random() * 9999) * (random.random() * -5)) ** 2
-        )
-
-        current_time = int(time.time() * 1000)
-        username_length = len(username)
-
-        # Prevent division by zero.
-        if username_length == 0:
+        if not username:
             raise ValueError("username cannot be empty")
 
-        chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+        # Cryptographically secure random characters.
+        chars = string.ascii_uppercase + string.digits
 
-        number = (random_number + current_time) / username_length
-        number_string = str(number)
-
+        # Generate a 24-character cryptographically secure token.
         characters = "".join(
-            random.choice(chars)
-            for _ in range(18)
+            secrets.choice(chars)
+            for _ in range(24)
         )
 
-        midpoint = len(number_string) // 2
-
+        # Keep the Lunar username as the visible identifier while
+        # making the actual verification portion cryptographically random.
         return (
             f"{lunarname}-"
-            f"{number_string[:midpoint]}-"
+            f"{characters[0:6]}-"
             f"{characters[6:12]}-"
-            f"{number_string[midpoint:]}-"
-            f"{characters[12:18]}"
+            f"{characters[12:18]}-"
+            f"{characters[18:24]}"
         )
 
 

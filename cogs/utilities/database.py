@@ -256,61 +256,62 @@ CORE_SCHEMA: tuple[str, ...] = (
     # XP EVENTS
     # ========================================================
 
-    """
-    CREATE TABLE IF NOT EXISTS xp_events (
-        snowflake_id text,
-        event_date date,
-        event_id timeuuid,
+"""
+CREATE TABLE IF NOT EXISTS xp_events (
+    snowflake_id text,
+    event_date date,
+    event_id timeuuid,
 
-        amount bigint,
-        reason text,
+    amount bigint,
+    reason text,
 
-        guild_id text,
-        channel_id text,
+    guild_id text,
+    channel_id text,
 
-        balance_after bigint,
+    balance_after bigint,
 
-        metadata map<text, text>,
+    metadata map<text, text>,
 
-        PRIMARY KEY (
-            snowflake_id,
-            event_date,
-            event_id
-        )
+    PRIMARY KEY (
+        snowflake_id,
+        event_date,
+        event_id
     )
-    WITH CLUSTERING ORDER BY (
-        event_id DESC
-    )
-    """,
-
+)
+WITH CLUSTERING ORDER BY (
+    event_date ASC,
+    event_id DESC
+)
+""",
     # ========================================================
     # SHAME EVENTS
     # ========================================================
 
-    """
-    CREATE TABLE IF NOT EXISTS shame_events (
-        snowflake_id text,
-        event_date date,
-        event_id timeuuid,
+  """
+CREATE TABLE IF NOT EXISTS shame_events (
+    snowflake_id text,
+    event_date date,
+    event_id timeuuid,
 
-        amount int,
-        reason text,
+    amount int,
+    reason text,
 
-        moderator_id text,
-        guild_id text,
+    moderator_id text,
+    guild_id text,
 
-        metadata map<text, text>,
+    metadata map<text, text>,
 
-        PRIMARY KEY (
-            snowflake_id,
-            event_date,
-            event_id
-        )
+    PRIMARY KEY (
+        snowflake_id,
+        event_date,
+        event_id
     )
-    WITH CLUSTERING ORDER BY (
-        event_id DESC
-    )
-    """,
+)
+WITH CLUSTERING ORDER BY (
+    event_date ASC,
+    event_id DESC
+)
+""",
 
     # ========================================================
     # GUILDS
@@ -479,31 +480,32 @@ CREATE TABLE IF NOT EXISTS leaderboard_sync_state (
     # AUDIT LOGS
     # ========================================================
 
-    """
-    CREATE TABLE IF NOT EXISTS audit_logs (
-        guild_id text,
-        event_date date,
-        event_id timeuuid,
+"""
+CREATE TABLE IF NOT EXISTS audit_logs (
+    guild_id text,
+    event_date date,
+    event_id timeuuid,
 
-        actor_id text,
+    actor_id text,
 
-        action text,
-        target_id text,
+    action text,
+    target_id text,
 
-        reason text,
+    reason text,
 
-        metadata map<text, text>,
+    metadata map<text, text>,
 
-        PRIMARY KEY (
-            guild_id,
-            event_date,
-            event_id
-        )
+    PRIMARY KEY (
+        guild_id,
+        event_date,
+        event_id
     )
-    WITH CLUSTERING ORDER BY (
-        event_id DESC
-    )
-    """,
+)
+WITH CLUSTERING ORDER BY (
+    event_date ASC,
+    event_id DESC
+)
+""",
 
     # ========================================================
     # BOT COUNTERS
@@ -546,44 +548,45 @@ CREATE TABLE IF NOT EXISTS leaderboard_sync_state (
     # GITHUB COMMITS
     # ========================================================
 
-    """
-    CREATE TABLE IF NOT EXISTS github_commits (
-        repository text,
-        committed_date date,
-        committed_at timestamp,
-        sha text,
+"""
+CREATE TABLE IF NOT EXISTS github_commits (
+    repository text,
+    committed_date date,
+    committed_at timestamp,
+    sha text,
 
-        author text,
-        committer text,
+    author text,
+    committer text,
 
-        message text,
+    message text,
 
-        branch text,
+    branch text,
 
-        verified boolean,
+    verified boolean,
 
-        additions int,
-        deletions int,
-        changed_files int,
+    additions int,
+    deletions int,
+    changed_files int,
 
-        html_url text,
+    html_url text,
 
-        files list<text>,
+    files list<text>,
 
-        metadata map<text, text>,
+    metadata map<text, text>,
 
-        PRIMARY KEY (
-            repository,
-            committed_date,
-            committed_at,
-            sha
-        )
+    PRIMARY KEY (
+        repository,
+        committed_date,
+        committed_at,
+        sha
     )
-    WITH CLUSTERING ORDER BY (
-        committed_at DESC
-    )
-    """,
-
+)
+WITH CLUSTERING ORDER BY (
+    committed_date ASC,
+    committed_at DESC,
+    sha ASC
+)
+""",
     # ========================================================
     # GITHUB ISSUES
     # ========================================================
@@ -720,23 +723,23 @@ CREATE TABLE IF NOT EXISTS leaderboard_sync_state (
     # ACTIVE GIVEAWAYS
     # ========================================================
 
-    """
-    CREATE TABLE IF NOT EXISTS giveaways_active (
-        bucket text,
-        ends_at timestamp,
-        giveaway_id text,
+"""
+CREATE TABLE IF NOT EXISTS giveaways_active (
+    bucket text,
+    ends_at timestamp,
+    giveaway_id text,
 
-        PRIMARY KEY (
-            bucket,
-            ends_at,
-            giveaway_id
-        )
+    PRIMARY KEY (
+        bucket,
+        ends_at,
+        giveaway_id
     )
-    WITH CLUSTERING ORDER BY (
-        ends_at ASC
-    )
-    """,
 )
+WITH CLUSTERING ORDER BY (
+    ends_at ASC,
+    giveaway_id ASC
+)
+""",
 
 
 # ============================================================

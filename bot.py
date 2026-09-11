@@ -48,7 +48,7 @@ HTTP_TIMEOUT = aiohttp.ClientTimeout(
     sock_read=10,
 )
 
-LUNAR_DOMAIN = "https://lunarx.to"
+
 
 LUNAR_STANDARD_HEADER = {
     "bypass": " ",

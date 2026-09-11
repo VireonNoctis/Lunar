@@ -704,4 +704,3 @@ await bot.add_cog(
 )
 
 
-One difference from the JS version is that this version doesn't expose Python's full `__builtins__` namespace through `eval`; the evaluation environment is deliberately limited to the Discord/bot objects needed for diagnostics.

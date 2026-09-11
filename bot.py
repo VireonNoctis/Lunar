@@ -1482,8 +1482,36 @@ async def main():
 # ENTRY POINT
 # ============================================================
 
-if __name__ == "__main__":
-
-    asyncio.run(
-        main()
+async def main():
+    COGS_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
     )
+
+    try:
+        logger.info("Initializing ScyllaDB...")
+        await db.initialize()
+        logger.info("ScyllaDB initialized successfully.")
+
+        await load_maintenance_state()
+
+        async with bot:
+            await bot.start(TOKEN)
+
+    except Exception:
+        logger.exception(
+            "Fatal startup error."
+        )
+        raise
+
+    finally:
+        try:
+            await db.close()
+        except Exception:
+            logger.exception(
+                "Failed to close ScyllaDB."
+            )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

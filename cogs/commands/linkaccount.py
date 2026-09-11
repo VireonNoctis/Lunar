@@ -13,8 +13,7 @@ from discord.ext import commands
 
 from cogs.utilities.database import db
 from cogs.utilities.emoji import EMOJI
-from cogs.utilities.generatecode import generatecode
-
+from cogs.commands.generatecode import GenerateCode
 
 log = logging.getLogger("lunar.link")
 

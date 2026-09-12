@@ -830,6 +830,9 @@ class ScyllaDatabase:
         self.giveaways: Optional[
             GiveawayRepository
         ] = None
+        self.leaderboard: Optional[
+            LeaderboardRepository
+        ] = None
 
     # ========================================================
     # INITIALIZATION
@@ -4511,7 +4514,217 @@ class GiveawayRepository(BaseRepository):
                 )
 
         return giveaways
+# ============================================================
+# LEADERBOARD
+# ============================================================
 
+class LeaderboardRepository(BaseRepository):
+
+    async def increment_message(
+        self,
+        guild_id: int | str,
+        user_id: int | str,
+        hour_bucket: str,
+        amount: int = 1,
+    ) -> None:
+
+        await self.query(
+            """
+            UPDATE leaderboard_message_hourly
+            SET message_count = message_count + ?
+            WHERE guild_id = ?
+            AND hour_bucket = ?
+            AND user_id = ?
+            """,
+            (
+                amount,
+                str(guild_id),
+                str(hour_bucket),
+                str(user_id),
+            ),
+        )
+
+        await self.query(
+            """
+            UPDATE leaderboard_message_totals
+            SET message_count = message_count + ?
+            WHERE guild_id = ?
+            AND user_id = ?
+            """,
+            (
+                amount,
+                str(guild_id),
+                str(user_id),
+            ),
+        )
+
+    async def increment_vc(
+        self,
+        guild_id: int | str,
+        user_id: int | str,
+        seconds: int,
+    ) -> None:
+
+        await self.query(
+            """
+            UPDATE leaderboard_vc_totals
+            SET seconds = seconds + ?
+            WHERE guild_id = ?
+            AND user_id = ?
+            """,
+            (
+                seconds,
+                str(guild_id),
+                str(user_id),
+            ),
+        )
+
+    async def set_vc_active(
+        self,
+        guild_id: int | str,
+        user_id: int | str,
+        joined_at: datetime,
+    ) -> None:
+
+        await self.query(
+            """
+            INSERT INTO leaderboard_vc_active (
+                guild_id,
+                user_id,
+                joined_at
+            )
+            VALUES (?, ?, ?)
+            """,
+            (
+                str(guild_id),
+                str(user_id),
+                joined_at,
+            ),
+        )
+
+    async def remove_vc_active(
+        self,
+        guild_id: int | str,
+        user_id: int | str,
+    ) -> None:
+
+        await self.query(
+            """
+            DELETE FROM leaderboard_vc_active
+            WHERE guild_id = ?
+            AND user_id = ?
+            """,
+            (
+                str(guild_id),
+                str(user_id),
+            ),
+        )
+
+    async def get_message_totals(
+        self,
+        guild_id: int | str,
+        limit: int = 10,
+    ):
+
+        result = await self.query(
+            """
+            SELECT user_id, message_count
+            FROM leaderboard_message_totals
+            WHERE guild_id = ?
+            LIMIT ?
+            """,
+            (
+                str(guild_id),
+                max(1, int(limit)),
+            ),
+        )
+
+        return result.all()
+
+    async def get_vc_totals(
+        self,
+        guild_id: int | str,
+        limit: int = 10,
+    ):
+
+        result = await self.query(
+            """
+            SELECT user_id, seconds
+            FROM leaderboard_vc_totals
+            WHERE guild_id = ?
+            LIMIT ?
+            """,
+            (
+                str(guild_id),
+                max(1, int(limit)),
+            ),
+        )
+
+        return result.all()
+
+    async def get_active_vc(
+        self,
+        guild_id: int | str,
+    ):
+
+        result = await self.query(
+            """
+            SELECT user_id, joined_at
+            FROM leaderboard_vc_active
+            WHERE guild_id = ?
+            """,
+            (
+                str(guild_id),
+            ),
+        )
+
+        return result.all()
+
+    async def get_sync_state(
+        self,
+        guild_id: int | str,
+    ):
+
+        return await self.one(
+            """
+            SELECT *
+            FROM leaderboard_sync_state
+            WHERE guild_id = ?
+            """,
+            (
+                str(guild_id),
+            ),
+        )
+
+    async def update_sync_state(
+        self,
+        guild_id: int | str,
+        *,
+        last_sync_at: datetime,
+        messages_scanned: int,
+        channels_scanned: int,
+        users_discovered: int,
+    ) -> None:
+
+        await self.query(
+            """
+            INSERT INTO leaderboard_sync_state (
+                guild_id,
+                last_sync_at,
+                messages_scanned,
+                channels_scanned,
+                users_discovered
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                str(guild_id),
+                last_sync_at,
+                messages_scanned,
+                channels_scanned,
+                users_discovered,
+            ),
+        )
 
 # ============================================================
 # CSV MIGRATION

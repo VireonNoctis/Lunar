@@ -740,7 +740,7 @@ WITH CLUSTERING ORDER BY (
     giveaway_id ASC
 )
 """,
-
+)
 
 # ============================================================
 # DATABASE ENGINE

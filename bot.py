@@ -4,17 +4,15 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-
 import aiohttp
 import discord
-
 from discord import app_commands
 from discord.ext import commands, tasks
 
 from cogs.utilities.database import db
 from cogs.utilities.emoji import EMOJI
 from cogs.commands.linkaccount import LinkUsernameModal
-
+from cogs.utilities.errors import install_error_logging
 
 # ============================================================
 # CONFIG
@@ -110,11 +108,16 @@ intents.members = True
 
 
 bot = commands.Bot(
-    command_prefix="!",
+    command_prefix="?",
     intents=intents,
     status=discord.Status.idle,
 )
+bot = commands.Bot(
+    command_prefix=COMMAND_PREFIX,
+    intents=intents,
+)
 
+install_error_logging(bot)
 
 # Runtime maintenance state.
 #

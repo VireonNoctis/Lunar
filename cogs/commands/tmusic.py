@@ -72,8 +72,7 @@ POLL_INTERVAL_MINUTES = max(
 
 MAX_SUBSCRIPTIONS_PER_GUILD = 25
 MAX_SEEN_IDS = 75
-
-SETTINGS_PREFIX = "tmusic:guild:"
+SETTINGS_SCOPE = "tmusic"
 SETTINGS_KEY = "subscriptions"
 
 HTTP_TIMEOUT = aiohttp.ClientTimeout(
@@ -152,9 +151,6 @@ def utcnow() -> datetime:
 def iso_now() -> str:
     return utcnow().isoformat()
 
-
-def scope_for(guild_id: int) -> str:
-    return f"{SETTINGS_PREFIX}{guild_id}"
 
 
 def clean_text(
@@ -469,57 +465,39 @@ class MusicSubscription:
 
 class TMusicStorage:
 
-    @staticmethod
-    async def load(
-        guild_id: int,
-    ) -> list[MusicSubscription]:
+ @staticmethod
+async def load(
+    guild_id: int,
+) -> list[MusicSubscription]:
 
-        data = await db.settings.get(
-            scope_for(guild_id),
-            SETTINGS_KEY,
-            default=[],
-        )
+    data = await db.settings.get(
+        SETTINGS_SCOPE,
+        guild_id,
+        SETTINGS_KEY,
+        default=[],
+    )
 
-        if not isinstance(
-            data,
-            list,
-        ):
-            return []
+    if not isinstance(data, list):
+        return []
 
-        subscriptions: list[
-            MusicSubscription
-        ] = []
+    subscriptions: list[MusicSubscription] = []
 
-        for item in data:
+    for item in data:
+        if not isinstance(item, dict):
+            continue
 
-            if not isinstance(
-                item,
-                dict,
-            ):
-                continue
+        try:
+            subscription = MusicSubscription.from_dict(item)
 
-            try:
+            if subscription.id:
+                subscriptions.append(subscription)
 
-                subscription = (
-                    MusicSubscription.from_dict(
-                        item
-                    )
-                )
+        except (TypeError, ValueError):
+            log.exception(
+                "Invalid TMusic subscription"
+            )
 
-                if subscription.id:
-                    subscriptions.append(
-                        subscription
-                    )
-
-            except (
-                TypeError,
-                ValueError,
-            ):
-                log.exception(
-                    "Invalid TMusic subscription"
-                )
-
-        return subscriptions
+    return subscriptions
 
     @staticmethod
     async def save(
@@ -529,15 +507,15 @@ class TMusicStorage:
         ],
     ) -> None:
 
-        await db.settings.set(
-            scope_for(guild_id),
-            SETTINGS_KEY,
-            [
-                subscription.to_dict()
-                for subscription
-                in subscriptions
-            ],
-        )
+await db.settings.set(
+    SETTINGS_SCOPE,
+    guild_id,
+    SETTINGS_KEY,
+    [
+        subscription.to_dict()
+        for subscription in subscriptions
+    ],
+)
 
     @staticmethod
     async def find(
@@ -2491,22 +2469,17 @@ class TMusic(commands.Cog):
 
         try:
 
-            await db.audit.record(
-                scope=(
-                    f"guild:"
-                    f"{interaction.guild.id}"
-                ),
-                action="tmusic.add",
-                actor_id=str(
-                    interaction.user.id
-                ),
-                target_id=subscription.id,
-                details=(
-                    f"artist={subscription.artist_name};"
-                    f"providers={','.join(subscription.providers)};"
-                    f"channel={subscription.channel_id}"
-                ),
-            )
+await db.audit.record(
+    interaction.guild.id,
+    actor_id=interaction.user.id,
+    action="tmusic.add",
+    target_id=subscription.id,
+    reason=(
+        f"artist={subscription.artist_name};"
+        f"providers={','.join(subscription.providers)};"
+        f"channel={subscription.channel_id}"
+    ),
+)
 
         except Exception:
 
@@ -2816,20 +2789,13 @@ class TMusic(commands.Cog):
 
         try:
 
-            await db.audit.record(
-                scope=(
-                    f"guild:"
-                    f"{interaction.guild.id}"
-                ),
-                action="tmusic.pause",
-                actor_id=str(
-                    interaction.user.id
-                ),
-                target_id=subscription.id,
-                details=(
-                    f"artist={subscription.artist_name}"
-                ),
-            )
+await db.audit.record(
+    interaction.guild.id,
+    actor_id=interaction.user.id,
+    action="tmusic.pause",
+    target_id=subscription.id,
+    reason=f"artist={subscription.artist_name}",
+)
 
         except Exception:
 
@@ -2907,20 +2873,13 @@ class TMusic(commands.Cog):
 
         try:
 
-            await db.audit.record(
-                scope=(
-                    f"guild:"
-                    f"{interaction.guild.id}"
-                ),
-                action="tmusic.resume",
-                actor_id=str(
-                    interaction.user.id
-                ),
-                target_id=subscription.id,
-                details=(
-                    f"artist={subscription.artist_name}"
-                ),
-            )
+await db.audit.record(
+    interaction.guild.id,
+    actor_id=interaction.user.id,
+    action="tmusic.resume",
+    target_id=subscription.id,
+    reason=f"artist={subscription.artist_name}",
+)
 
         except Exception:
 
@@ -3068,21 +3027,13 @@ class RemoveTrackerView(
 
         try:
 
-            await db.audit.record(
-                scope=(
-                    f"guild:"
-                    f"{interaction.guild.id}"
-                ),
-                action="tmusic.remove",
-                actor_id=str(
-                    interaction.user.id
-                ),
-                target_id=self.subscription.id,
-                details=(
-                    f"artist="
-                    f"{self.subscription.artist_name}"
-                ),
-            )
+await db.audit.record(
+    interaction.guild.id,
+    actor_id=interaction.user.id,
+    action="tmusic.remove",
+    target_id=self.subscription.id,
+    reason=f"artist={self.subscription.artist_name}",
+)
 
         except Exception:
 

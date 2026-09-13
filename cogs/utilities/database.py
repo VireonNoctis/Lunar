@@ -1066,47 +1066,44 @@ class ScyllaDatabase:
     # GENERIC EXECUTION
     # ========================================================
 
-    async def execute(
-        self,
-        query: str,
-        parameters: Optional[
-            Sequence[Any]
-        ] = None,
-        *,
-        consistency: Optional[
-            ConsistencyLevel
-        ] = None,
-    ):
-
-        if self.session is None:
-            raise RuntimeError(
-                "Database is not initialized."
-            )
-
-        statement = SimpleStatement(
-            query,
-            consistency_level=(
-                consistency
-                or ConsistencyLevel.LOCAL_QUORUM
-            ),
+async def execute(
+    self,
+    query: str,
+    parameters: Optional[
+        Sequence[Any]
+    ] = None,
+    *,
+    consistency: Optional[
+        ConsistencyLevel
+    ] = None,
+):
+    if self.session is None:
+        raise RuntimeError(
+            "Database is not initialized."
         )
 
-        return await asyncio.to_thread(
-            self.session.execute,
-            statement,
-            parameters or (),
-            timeout=self.config.request_timeout,
-        )
+    parameters = (
+        tuple(parameters)
+        if parameters is not None
+        else ()
+    )
 
-    async def execute_prepared(
-        self,
-        query: str,
-        parameters: Sequence[Any],
-        *,
-        consistency: Optional[
-            ConsistencyLevel
-        ] = None,
-    ):
+    # --------------------------------------------------------
+    # PREPARED QUERY
+    # --------------------------------------------------------
+    #
+    # Lunar repository queries use `?` placeholders.
+    # Prepared statements MUST use `?`.
+    #
+    # Example:
+    #
+    # SELECT *
+    # FROM users
+    # WHERE snowflake_id = ?
+    #
+    # --------------------------------------------------------
+
+    if parameters and "?" in query:
 
         statement = await self.prepare(
             query
@@ -1117,17 +1114,35 @@ class ScyllaDatabase:
                 consistency
             )
 
-        if self.session is None:
-            raise RuntimeError(
-                "Database is not initialized."
-            )
-
         return await asyncio.to_thread(
             self.session.execute,
             statement,
             parameters,
             timeout=self.config.request_timeout,
         )
+
+    # --------------------------------------------------------
+    # SIMPLE QUERY
+    # --------------------------------------------------------
+    #
+    # Used for schema creation, health checks, and other
+    # statements without bound parameters.
+    #
+    # --------------------------------------------------------
+
+    statement = SimpleStatement(
+        query,
+        consistency_level=(
+            consistency
+            or ConsistencyLevel.LOCAL_QUORUM
+        ),
+    )
+
+    return await asyncio.to_thread(
+        self.session.execute,
+        statement,
+        timeout=self.config.request_timeout,
+    )
 
     # ========================================================
     # BATCH

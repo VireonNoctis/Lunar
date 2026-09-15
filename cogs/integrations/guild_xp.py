@@ -28,8 +28,8 @@ class GuildXP(commands.Cog):
     BASE_XP = 8
 
     # Harder progression as levels increase.
-    BASE_REQUIRED_XP = 250
-    LEVEL_GROWTH = 1.28
+    BASE_REQUIRED_XP = 100
+    LEVEL_GROWTH = 1.05
 
     # Anti-spam.
     MIN_COOLDOWN = 0.5

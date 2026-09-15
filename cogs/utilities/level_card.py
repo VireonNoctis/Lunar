@@ -17,8 +17,7 @@ log = logging.getLogger("lunar.level_card")
 # ==============================================================
 
 LUNAR_PANEL_URL = (
-    "https://vault.lunarx.to/cdn/admin/manga/migrated/"
-    "f38cadbc-96ed-4968-bd7e-1e85215b69a5.png"
+                    "https://vault.lunarx.to/cdn/admin/manga/migrated/5f809d70-11db-4b58-957d-8e353650ef35.png"
 )
 
 LUNAR_LOGO_DESIGN_1_URL = (

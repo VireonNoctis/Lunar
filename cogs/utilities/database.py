@@ -228,6 +228,77 @@ CORE_SCHEMA: tuple[str, ...] = (
     )
     """,
 
+    # --------------------------------------------------------
+    # GUILD XP
+    # --------------------------------------------------------
+
+    """
+    CREATE TABLE IF NOT EXISTS guild_xp (
+        guild_id text,
+        snowflake_id text,
+
+        xp bigint,
+        level int,
+        required_xp bigint,
+
+        total_messages bigint,
+
+        last_xp_at timestamp,
+        created_at timestamp,
+        updated_at timestamp,
+
+        PRIMARY KEY ((guild_id), snowflake_id)
+    )
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS guild_xp_events (
+        guild_id text,
+        snowflake_id text,
+        event_time timeuuid,
+
+        amount bigint,
+        xp_after bigint,
+        level_after int,
+
+        source text,
+
+        channel_id text,
+        message_id text,
+
+        metadata map<text, text>,
+
+        PRIMARY KEY (
+            (guild_id, snowflake_id),
+            event_time
+        )
+    )
+    WITH CLUSTERING ORDER BY (
+        event_time DESC
+    )
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS guild_xp_rank (
+        guild_id text,
+        xp bigint,
+        snowflake_id text,
+
+        level int,
+        updated_at timestamp,
+
+        PRIMARY KEY (
+            (guild_id),
+            xp,
+            snowflake_id
+        )
+    )
+    WITH CLUSTERING ORDER BY (
+        xp DESC,
+        snowflake_id ASC
+    )
+    """,
+    
     # ========================================================
     # ACCOUNT LINKS BY LUNAR UUID
     # ========================================================
@@ -782,7 +853,10 @@ class ScyllaDatabase:
         self.xp: Optional[
             XPRepository
         ] = None
-
+        
+        self.guild_xp: Optional[
+            GuildXPRepository
+        ] = None
         self.shame: Optional[
             ShameRepository
         ] = None
@@ -833,7 +907,7 @@ class ScyllaDatabase:
         self.leaderboard: Optional[
             LeaderboardRepository
         ] = None
-
+        self.guild_xp = GuildXPRepository(self)
     # ========================================================
     # INITIALIZATION
     # ========================================================
@@ -1033,7 +1107,7 @@ class ScyllaDatabase:
 
         self.leaderboard = LeaderboardRepository(self)
 
-        
+        self.guild_xp = GuildXPRepository(self)
     # ========================================================
     # PREPARED STATEMENTS
     # ========================================================
@@ -2894,7 +2968,336 @@ class GuildRepository(BaseRepository):
             """,
             values,
         )
+# ============================================================
+# GUILD XP REPOSITORY
+# ============================================================
 
+class GuildXPRepository(BaseRepository):
+
+    async def get(
+        self,
+        guild_id: int | str,
+        snowflake_id: int | str,
+    ):
+        result = await self.db.execute(
+            """
+            SELECT *
+            FROM guild_xp
+            WHERE guild_id = ?
+              AND snowflake_id = ?
+            """,
+            (
+                str(guild_id),
+                str(snowflake_id),
+            ),
+        )
+
+        return result.one()
+
+    async def ensure(
+        self,
+        guild_id: int | str,
+        snowflake_id: int | str,
+        *,
+        level: int = 1,
+        required_xp: int = 250,
+    ) -> None:
+
+        existing = await self.get(
+            guild_id,
+            snowflake_id,
+        )
+
+        if existing is not None:
+            return
+
+        now = utcnow()
+
+        await self.db.execute(
+            """
+            INSERT INTO guild_xp (
+                guild_id,
+                snowflake_id,
+                xp,
+                level,
+                required_xp,
+                total_messages,
+                last_xp_at,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(guild_id),
+                str(snowflake_id),
+                0,
+                level,
+                required_xp,
+                0,
+                None,
+                now,
+                now,
+            ),
+        )
+
+        await self.db.execute(
+            """
+            INSERT INTO guild_xp_rank (
+                guild_id,
+                xp,
+                snowflake_id,
+                level,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                str(guild_id),
+                0,
+                str(snowflake_id),
+                level,
+                now,
+            ),
+        )
+
+    async def add_xp(
+        self,
+        guild_id: int | str,
+        snowflake_id: int | str,
+        amount: int,
+        *,
+        level: int,
+        required_xp: int,
+        source: str = "message",
+        channel_id: int | str | None = None,
+        message_id: int | str | None = None,
+        total_messages: int | None = None,
+    ) -> None:
+
+        guild_id = str(guild_id)
+        snowflake_id = str(snowflake_id)
+
+        now = utcnow()
+
+        current = await self.get(
+            guild_id,
+            snowflake_id,
+        )
+
+        current_xp = (
+            int(current.xp)
+            if current is not None
+            else 0
+        )
+
+        new_xp = current_xp + int(amount)
+
+        messages = (
+            int(current.total_messages or 0)
+            if current is not None
+            else 0
+        )
+
+        if total_messages is not None:
+            messages = int(total_messages)
+        else:
+            messages += 1
+
+        await self.db.execute(
+            """
+            UPDATE guild_xp
+            SET xp = ?,
+                level = ?,
+                required_xp = ?,
+                total_messages = ?,
+                last_xp_at = ?,
+                updated_at = ?
+            WHERE guild_id = ?
+              AND snowflake_id = ?
+            """,
+            (
+                new_xp,
+                int(level),
+                int(required_xp),
+                messages,
+                now,
+                now,
+                guild_id,
+                snowflake_id,
+            ),
+        )
+
+        await self.db.execute(
+            """
+            INSERT INTO guild_xp_rank (
+                guild_id,
+                xp,
+                snowflake_id,
+                level,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                guild_id,
+                new_xp,
+                snowflake_id,
+                int(level),
+                now,
+            ),
+        )
+
+        from cassandra.util import uuid_from_time
+
+        await self.db.execute(
+            """
+            INSERT INTO guild_xp_events (
+                guild_id,
+                snowflake_id,
+                event_time,
+                amount,
+                xp_after,
+                level_after,
+                source,
+                channel_id,
+                message_id,
+                metadata
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                guild_id,
+                snowflake_id,
+                uuid_from_time(now),
+                int(amount),
+                new_xp,
+                int(level),
+                source,
+                str(channel_id)
+                if channel_id is not None
+                else None,
+                str(message_id)
+                if message_id is not None
+                else None,
+                {},
+            ),
+        )
+
+    async def update_progress(
+        self,
+        guild_id: int | str,
+        snowflake_id: int | str,
+        *,
+        xp: int,
+        level: int,
+        required_xp: int,
+        total_messages: int,
+    ) -> None:
+
+        guild_id = str(guild_id)
+        snowflake_id = str(snowflake_id)
+
+        now = utcnow()
+
+        await self.db.execute(
+            """
+            UPDATE guild_xp
+            SET xp = ?,
+                level = ?,
+                required_xp = ?,
+                total_messages = ?,
+                updated_at = ?
+            WHERE guild_id = ?
+              AND snowflake_id = ?
+            """,
+            (
+                int(xp),
+                int(level),
+                int(required_xp),
+                int(total_messages),
+                now,
+                guild_id,
+                snowflake_id,
+            ),
+        )
+
+        await self.db.execute(
+            """
+            INSERT INTO guild_xp_rank (
+                guild_id,
+                xp,
+                snowflake_id,
+                level,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                guild_id,
+                int(xp),
+                snowflake_id,
+                int(level),
+                now,
+            ),
+        )
+
+    async def rank(
+        self,
+        guild_id: int | str,
+        snowflake_id: int | str,
+    ) -> int:
+
+        guild_id = str(guild_id)
+        snowflake_id = str(snowflake_id)
+
+        rows = await self.db.execute(
+            """
+            SELECT snowflake_id, xp
+            FROM guild_xp_rank
+            WHERE guild_id = ?
+            LIMIT 10000
+            """,
+            (guild_id,),
+        )
+
+        ranking = list(rows)
+
+        ranking.sort(
+            key=lambda row: (
+                -int(row.xp or 0),
+                str(row.snowflake_id),
+            )
+        )
+
+        for index, row in enumerate(
+            ranking,
+            start=1,
+        ):
+            if str(
+                row.snowflake_id
+            ) == snowflake_id:
+                return index
+
+        return 0
+
+    async def top(
+        self,
+        guild_id: int | str,
+        limit: int = 10,
+    ):
+        return await self.db.execute(
+            """
+            SELECT *
+            FROM guild_xp_rank
+            WHERE guild_id = ?
+            LIMIT ?
+            """,
+            (
+                str(guild_id),
+                int(limit),
+            ),
+        )
 
 # ============================================================
 # SETTINGS

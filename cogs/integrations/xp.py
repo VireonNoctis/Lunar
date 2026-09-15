@@ -3,7 +3,7 @@ import os
 import random
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-
+from urllib.parse import quote
 import aiohttp
 import discord
 from discord.ext import commands
@@ -19,7 +19,9 @@ log = logging.getLogger("lunar.xp")
 # ============================================================
 
 LUNAR_XP_API = "https://api.lunarx.to/api/admin/users/give-xp"
-
+LUNAR_PROFILE_API = (
+    "https://api.lunarx.to/api/animes/profile"
+)
 XP_LOG_CHANNEL_ID = 1499281835757404250
 XP_EMBED_CHANNEL_ID = 1514345477188092024
 
@@ -139,6 +141,145 @@ class XP(commands.Cog):
         except Exception:
             log.exception("Unexpected XP API error")
             return None
+
+    async def get_lunar_profile(
+        self,
+        lunar_username: str,
+    ) -> Optional[dict[str, Any]]:
+        """
+        Fetch the authoritative Lunar website profile.
+
+        Lunar remains the source of truth for:
+        - level
+        - XP
+        - XP required for the next level
+
+        The Discord bot does not store or calculate these values.
+        """
+
+        if not self.http:
+            return None
+
+        if not lunar_username:
+            return None
+
+        encoded_username = quote(
+            str(lunar_username),
+            safe="",
+        )
+
+        url = (
+            f"{LUNAR_PROFILE_API}"
+            f"?username={encoded_username}"
+        )
+
+        try:
+            async with self.http.get(
+                url,
+                headers={
+                    "Accept": "application/json",
+                },
+            ) as response:
+                if response.status != 200:
+                    body = await response.text()
+
+                    log.error(
+                        "Lunar profile API failed: %s | %s",
+                        response.status,
+                        body[:1000],
+                    )
+
+                    return None
+
+                payload = await response.json()
+
+        except (aiohttp.ClientError, TimeoutError):
+            log.exception(
+                "Lunar profile request failed for username=%s",
+                lunar_username,
+            )
+            return None
+
+        except Exception:
+            log.exception(
+                "Unexpected Lunar profile API error "
+                "for username=%s",
+                lunar_username,
+            )
+            return None
+
+        if not isinstance(payload, dict):
+            log.error(
+                "Invalid Lunar profile response type "
+                "for username=%s",
+                lunar_username,
+            )
+            return None
+
+        data = payload.get("data")
+
+        if not isinstance(data, dict):
+            log.error(
+                "Lunar profile response is missing data "
+                "for username=%s",
+                lunar_username,
+            )
+            return None
+
+        try:
+            level = int(
+                data.get(
+                    "level",
+                    0,
+                )
+            )
+
+            xp = int(
+                data.get(
+                    "xp",
+                    0,
+                )
+            )
+
+            xp_required = int(
+                data.get(
+                    "xp_required_for_next_level",
+                    0,
+                )
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            log.error(
+                "Invalid XP values in Lunar profile "
+                "for username=%s",
+                lunar_username,
+            )
+            return None
+
+        return {
+            "username": data.get(
+                "username",
+                lunar_username,
+            ),
+            "lunar_uuid": data.get(
+                "user_id"
+            ),
+            "level": level,
+            "xp": xp,
+            "required_xp": xp_required,
+            "avatar_url": data.get(
+                "avatar_url"
+            ),
+            "banner": data.get(
+                "banner"
+            ),
+            "title": data.get(
+                "title"
+            ),
+        }
 
     # --------------------------------------------------------
     # Database

@@ -1,384 +1,345 @@
 LUNAR BOT — INSTALLATION GUIDE
-==============================
 
-This file contains the Python dependencies required by the current Lunar
-Python source based on the complete import list provided.
+This installation guide matches the current Lunar source tree.
 
-------------------------------------------------------------
+---
+
 1. PYTHON VERSION
-------------------------------------------------------------
+
+---
+
+Required:
+
+Python 3.10+
 
 Recommended:
 
-    Python 3.11+
+Python 3.11 or newer
 
-Minimum:
+---
 
-    Python 3.10
-
-Python 3.10+ is recommended because it uses modern typing syntax
-and other features introduced in recent Python versions.
-
-
-------------------------------------------------------------
 2. REQUIRED PYTHON PACKAGES
-------------------------------------------------------------
 
-The project requires the following third-party packages:
+---
 
-    discord.py
-    aiohttp
-    Flask
-    scylla-driver
-    akinator
-
-
-------------------------------------------------------------
-3. INSTALL EVERYTHING
-------------------------------------------------------------
-
-Run:
-
-    python -m pip install -U discord.py aiohttp Flask scylla-driver akinator
-
-Or:
-
-    pip install -U discord.py aiohttp Flask scylla-driver akinator
-
-
-------------------------------------------------------------
-4. PACKAGE PURPOSES
-------------------------------------------------------------
+Install:
 
 discord.py
------------
-
-Provides the Discord bot framework.
-
-Used for:
-
-    - Discord gateway connection
-    - Commands
-    - Slash commands
-    - App commands
-    - Buttons
-    - Modals
-    - Views
-    - Embeds
-    - Cogs
-    - Tasks
-    - Discord interactions
-    - Member/guild/message functionality
-
-
 aiohttp
--------
-
-Used for asynchronous HTTP requests.
-
-The project uses it for external API communication, including Lunar
-services and other web endpoints.
-
-
 Flask
------
-
-Used by the web/status HTTP server.
-
-The source imports:
-
-    from flask import Flask, jsonify, request
-
-Therefore Flask must be installed even if the web server is only used
-for internal health/status functionality.
-
-
 scylla-driver
--------------
-
-Used for ScyllaDB.
-
-The package exposes the Python `cassandra.*` modules used by the project:
-
-    from cassandra import ConsistencyLevel
-    from cassandra.auth import PlainTextAuthProvider
-    from cassandra.cluster import Cluster, Session
-    from cassandra.policies import DCAwareRoundRobinPolicy
-    from cassandra.policies import TokenAwarePolicy
-    from cassandra.query import BatchStatement
-    from cassandra.query import BatchType
-    from cassandra.query import PreparedStatement
-    from cassandra.query import SimpleStatement
-
-IMPORTANT:
-
-Do NOT install a separate package solely because the imports are named
-`cassandra.*`.
-
-The Lunar database layer is intended to use:
-
-    scylla-driver
-
-
 akinator
---------
+python-dotenv
+Pillow
 
-Used by the Akinator command/cog.
+Dashboard dependencies:
 
-The project directly imports:
+fastapi
+pydantic
+aioredis
+SQLAlchemy
 
-    import akinator
+Optional dashboard server:
 
-Therefore it must be installed.
+uvicorn
 
+---
 
-------------------------------------------------------------
-5. ONE-COMMAND INSTALL
-------------------------------------------------------------
+3. ONE-COMMAND INSTALL
 
-For a normal deployment:
+---
 
-    python -m pip install -U discord.py aiohttp Flask scylla-driver akinator
+Main bot + dashboard:
 
+python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv Pillow fastapi pydantic aioredis SQLAlchemy uvicorn
 
-------------------------------------------------------------
-6. RECOMMENDED VIRTUAL ENVIRONMENT
-------------------------------------------------------------
+---
+
+4. VIRTUAL ENVIRONMENT
+
+---
 
 Linux/macOS:
 
-    python3 -m venv .venv
-    source .venv/bin/activate
-    python -m pip install --upgrade pip
-    python -m pip install -U discord.py aiohttp Flask scylla-driver akinator
-
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv Pillow fastapi pydantic aioredis SQLAlchemy uvicorn
 
 Windows PowerShell:
 
-    py -3 -m venv .venv
-    .\.venv\Scripts\Activate.ps1
-    python -m pip install --upgrade pip
-    python -m pip install -U discord.py aiohttp Flask scylla-driver akinator
-
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv Pillow fastapi pydantic aioredis SQLAlchemy uvicorn
 
 Windows CMD:
 
-    py -3 -m venv .venv
-    .venv\Scripts\activate
-    python -m pip install --upgrade pip
-    python -m pip install -U discord.py aiohttp Flask scylla-driver akinator
+py -3 -m venv .venv
+.venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv Pillow fastapi pydantic aioredis SQLAlchemy uvicorn
 
+---
 
-------------------------------------------------------------
-7. STANDARD LIBRARY — NO INSTALL REQUIRED
-------------------------------------------------------------
+5. WHAT EACH PACKAGE IS FOR
 
-The following modules appearing in the source are Python standard-library
-modules and must NOT be installed through pip:
+---
 
-    asyncio
-    base64
-    collections
-    dataclasses
-    datetime
-    hashlib
-    hmac
-    io
-    json
-    logging
-    math
-    os
-    platform
-    random
-    re
-    secrets
-    string
-    struct
-    sys
-    time
-    types
-    typing
-    urllib
-    uuid
-    xml
+discord.py
+Discord bot framework, commands, slash commands, views,
+buttons, modals, events, cogs and tasks.
 
+aiohttp
+Asynchronous HTTP requests used by Lunar integrations
+and external APIs.
 
-Examples include:
+Flask
+Used by the Lunar API/status integration.
 
-    from dataclasses import dataclass
-    from datetime import datetime
-    from typing import Optional
-    from collections import Counter
-    from urllib.parse import quote
-    import hashlib
-    import hmac
-    import secrets
-    import string
+scylla-driver
+Provides the cassandra.* modules used by Lunar's ScyllaDB
+database layer.
 
-None of these require separate installation.
+akinator
+Required by the Akinator command.
 
+python-dotenv
+Loads the project's .env file automatically.
 
-------------------------------------------------------------
-8. DATABASE REQUIREMENT
-------------------------------------------------------------
+Pillow
+Required for image generation and level-card rendering.
 
-Python package:
+fastapi
+Dashboard/backend API framework.
 
-    scylla-driver
+pydantic
+Request and data models used by the dashboard.
 
-External service:
+aioredis
+Optional Redis support used by the dashboard.
 
-    ScyllaDB
+SQLAlchemy
+Optional SQL database support used by the dashboard.
 
-The Python package alone is NOT the database server.
+uvicorn
+ASGI server used to run the FastAPI dashboard.
 
-The bot's database configuration currently expects a ScyllaDB/Cassandra
-compatible service, normally on:
+---
 
-    Host: 127.0.0.1
-    Port: 9042
+6. ENVIRONMENT FILE
 
-The database layer creates/initializes the Lunar keyspace and schema.
+---
 
+Create:
 
-------------------------------------------------------------
-9. DISCORD REQUIREMENTS
-------------------------------------------------------------
+.env
 
-You also need:
+The bot currently expects:
 
-    - A Discord Bot Application
-    - A Discord Bot Token
-    - Message Content Intent
-    - Server Members Intent
-
-The corresponding privileged intents must be enabled in the Discord
-Developer Portal.
-
-
-------------------------------------------------------------
-10. ENVIRONMENT VARIABLES
-------------------------------------------------------------
-
-At minimum, configure the Discord bot token expected by your current
-bot.py.
-
-Current source uses:
-
-    DISCORD_TOKEN
+TOKEN
 
 Example:
 
-    DISCORD_TOKEN=your_bot_token
+TOKEN=your_discord_bot_token
 
+Lunar integrations currently use:
 
-Lunar API systems may additionally require:
+lunar_token
+bypass_token
 
-    LUNAR_TOKEN
-    LUNAR_BYPASS_TOKEN
+Example:
 
-Some older integrations may currently use different environment-variable
-names. Those should be standardized before deployment.
+lunar_token=your_lunar_api_token
+bypass_token=your_lunar_bypass_token
 
+T-Music may use:
 
-------------------------------------------------------------
-11. OPTIONAL EXTERNAL API CREDENTIALS
-------------------------------------------------------------
+SPOTIFY_CLIENT_ID
+SPOTIFY_CLIENT_SECRET
+YOUTUBE_API_KEY
+SOUNDCLOUD_CLIENT_ID
+TMUSIC_POLL_INTERVAL_MINUTES
 
-Some commands/integrations may require their own credentials.
+---
 
-Depending on which features are enabled, you may need:
+7. IMPORTANT TOKEN NAME
 
-    SPOTIFY_CLIENT_ID
-    SPOTIFY_CLIENT_SECRET
-    YOUTUBE_API_KEY
-    SOUNDCLOUD_CLIENT_ID
-    GITHUB_TOKEN
+---
 
-These are configuration values, NOT Python packages.
+The current bot.py uses:
 
+TOKEN
 
-------------------------------------------------------------
-12. STARTING THE BOT
-------------------------------------------------------------
+Do NOT use:
 
-From the repository root:
+DISCORD_TOKEN
 
-    python bot.py
+unless bot.py is changed to read that variable.
 
+---
 
-------------------------------------------------------------
-13. QUICK INSTALL
-------------------------------------------------------------
+8. DISCORD BOT SETUP
 
-Fresh machine:
+---
 
-    python -m venv .venv
+Create a Discord application and bot.
 
-Activate the environment, then:
+Enable the required privileged intents in the
+Discord Developer Portal:
 
-    python -m pip install --upgrade pip
+Server Members Intent
+Message Content Intent
 
-Then install all required Python dependencies:
+Then place the bot token in:
 
-    python -m pip install -U discord.py aiohttp Flask scylla-driver akinator
+.env
 
-Then configure:
+---
 
-    DISCORD_TOKEN
+9. SCYLLADB
 
-    LUNAR_TOKEN
-    LUNAR_BYPASS_TOKEN
+---
 
-as required by the currently enabled Lunar integrations.
+The bot requires a ScyllaDB/Cassandra-compatible database.
 
-Then make sure ScyllaDB is running and start:
+The Python package:
 
-    python bot.py
+scylla-driver
 
+is only the Python driver.
 
-------------------------------------------------------------
-14. DEPENDENCY SUMMARY
-------------------------------------------------------------
+It does NOT install the database server itself.
 
-Required Python packages:
+The current database configuration expects a local database by default.
 
-    discord.py
-    aiohttp
-    Flask
-    scylla-driver
-    akinator
+Typical:
 
+Host: 127.0.0.1
+Port: 9042
 
-NOT required through pip:
+---
 
-    asyncio
-    base64
-    collections
-    dataclasses
-    datetime
-    hashlib
-    hmac
-    io
-    json
-    logging
-    math
-    os
-    platform
-    random
-    re
-    secrets
-    string
-    struct
-    sys
-    time
-    types
-    typing
-    urllib
-    uuid
-    xml
+10. DASHBOARD
 
+---
+
+The dashboard backend is located at:
+
+dashboard/backend/main.py
+
+To run it with Uvicorn:
+
+uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000
+
+Redis is optional in the current dashboard implementation.
+
+SQLAlchemy database support is also optional.
+
+---
+
+11. STANDARD LIBRARY
+
+---
+
+Do NOT install these with pip:
+
+asyncio
+base64
+collections
+dataclasses
+datetime
+hashlib
+hmac
+html
+io
+json
+logging
+math
+os
+pathlib
+platform
+random
+re
+secrets
+string
+struct
+sys
+threading
+time
+traceback
+types
+typing
+urllib
+uuid
+xml
+
+---
+
+12. START THE BOT
+
+---
+
+From the Lunar project root:
+
+python bot.py
+
+---
+
+13. QUICK SETUP
+
+---
+
+python -m venv .venv
+
+Activate the environment.
+
+Then:
+
+python -m pip install --upgrade pip
+
+Then:
+
+python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv Pillow fastapi pydantic aioredis SQLAlchemy uvicorn
+
+Create:
+
+.env
+
+Set:
+
+TOKEN=your_discord_bot_token
+
+Configure the other API credentials required by the enabled
+features.
+
+Start ScyllaDB.
+
+Then start Lunar:
+
+python bot.py
+
+---
+
+14. FINAL PACKAGE LIST
+
+---
+
+Required:
+
+discord.py
+aiohttp
+Flask
+scylla-driver
+akinator
+python-dotenv
+Pillow
+fastapi
+pydantic
+aioredis
+SQLAlchemy
+uvicorn
 
 FINAL INSTALL COMMAND:
 
-    python -m pip install -U discord.py aiohttp Flask scylla-driver akinator
+python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv Pillow fastapi pydantic aioredis SQLAlchemy uvicorn

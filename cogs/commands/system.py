@@ -5,7 +5,6 @@ import logging
 import platform
 import sys
 import time
-
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,33 +17,21 @@ from discord.ext import commands
 from cogs.utilities.database import db
 from cogs.utilities.emoji import EMOJI
 
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-OWNERS = {
-    1419744000977403994,
-    960946185768685618,
-}
-
+OWNERS = {1419744000977403994, 960946185768685618}
 COG_NAME = "Lunar System Control"
-
 MAX_LOG_ENTRIES = 500
 
-# Fake loading timings.
-DASHBOARD_LOADING = 1.20
-DIAGNOSTICS_LOADING = 1.35
-LOGS_LOADING = 0.90
-CACHE_LOADING = 1.00
-DATABASE_LOADING = 1.35
-GATEWAY_LOADING = 1.00
-SYSTEM_LOADING = 1.10
-HEALTH_LOADING = 1.15
-COMMAND_STATS_LOADING = 1.00
+DASHBOARD_LOADING = 1.2
+DIAGNOSTICS_LOADING = 1.2
+LOGS_LOADING = 0.9
+DATABASE_LOADING = 1.2
+GATEWAY_LOADING = 1.0
+SYSTEM_LOADING = 1.0
+HEALTH_LOADING = 1.0
+COMMAND_STATS_LOADING = 1.0
 SECURITY_LOADING = 0.85
-MAINTENANCE_LOADING = 1.25
-EVAL_LOADING = 1.10
+MAINTENANCE_LOADING = 1.0
+EVAL_LOADING = 1.0
 
 LOG_LEVELS = {
     "all": None,
@@ -55,17 +42,8 @@ LOG_LEVELS = {
     "critical": logging.CRITICAL,
 }
 
-
-# ============================================================
-# LOGGER
-# ============================================================
-
 logger = logging.getLogger("lunar.system")
 
-
-# ============================================================
-# STORED LOG
-# ============================================================
 
 @dataclass(slots=True)
 class StoredLog:
@@ -75,19 +53,12 @@ class StoredLog:
     message: str
 
 
-# ============================================================
-# MEMORY LOG HANDLER
-# ============================================================
-
 class MemoryLogHandler(logging.Handler):
-
     def __init__(
         self,
         max_entries: int = MAX_LOG_ENTRIES,
     ) -> None:
-
         super().__init__()
-
         self.entries: deque[StoredLog] = deque(
             maxlen=max_entries
         )
@@ -96,23 +67,18 @@ class MemoryLogHandler(logging.Handler):
         self,
         record: logging.LogRecord,
     ) -> None:
-
         try:
-
-            message = self.format(record)
-
             self.entries.append(
                 StoredLog(
-                    timestamp=datetime.fromtimestamp(
+                    datetime.fromtimestamp(
                         record.created,
                         timezone.utc,
                     ),
-                    level=record.levelno,
-                    logger_name=record.name,
-                    message=message,
+                    record.levelno,
+                    record.name,
+                    self.format(record),
                 )
             )
-
         except Exception:
             pass
 
@@ -122,11 +88,9 @@ class MemoryLogHandler(logging.Handler):
         limit: int = 25,
         level: Optional[int] = None,
     ) -> list[StoredLog]:
-
         entries = list(self.entries)
 
         if level is not None:
-
             entries = [
                 entry
                 for entry in entries
@@ -135,10 +99,6 @@ class MemoryLogHandler(logging.Handler):
 
         return entries[-limit:]
 
-
-# ============================================================
-# GLOBAL MEMORY LOGGER
-# ============================================================
 
 MEMORY_HANDLER = MemoryLogHandler()
 
@@ -150,19 +110,13 @@ MEMORY_HANDLER.setFormatter(
 
 
 def install_memory_handler() -> None:
-
     root = logging.getLogger()
 
     if MEMORY_HANDLER not in root.handlers:
-
         root.addHandler(
             MEMORY_HANDLER
         )
 
-
-# ============================================================
-# HELPERS
-# ============================================================
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -171,28 +125,27 @@ def utcnow() -> datetime:
 def fmt_uptime(
     seconds: float,
 ) -> str:
-
     seconds = max(
         0,
         int(seconds),
     )
 
-    days, remainder = divmod(
+    days, seconds = divmod(
         seconds,
         86400,
     )
 
-    hours, remainder = divmod(
-        remainder,
+    hours, seconds = divmod(
+        seconds,
         3600,
     )
 
     minutes, seconds = divmod(
-        remainder,
+        seconds,
         60,
     )
 
-    parts: list[str] = []
+    parts = []
 
     if days:
         parts.append(
@@ -220,7 +173,6 @@ def fmt_uptime(
 def fmt_dt(
     value: Optional[datetime],
 ) -> str:
-
     if value is None:
         return "Never"
 
@@ -229,14 +181,14 @@ def fmt_dt(
             tzinfo=timezone.utc
         )
 
-    timestamp = int(
+    ts = int(
         value.timestamp()
     )
 
     return (
-        f"<t:{timestamp}:F>"
+        f"<t:{ts}:F>"
         f" • "
-        f"<t:{timestamp}:R>"
+        f"<t:{ts}:R>"
     )
 
 
@@ -244,7 +196,6 @@ def truncate(
     value,
     maximum: int,
 ) -> str:
-
     value = str(value)
 
     if len(value) <= maximum:
@@ -259,7 +210,6 @@ def truncate(
 def yes_no(
     value: bool,
 ) -> str:
-
     return (
         f"{EMOJI['approved']} Yes"
         if value
@@ -269,92 +219,30 @@ def yes_no(
 
 
 def status_badge(
-    healthy: Optional[bool],
+    value: Optional[bool],
 ) -> str:
-
-    if healthy is True:
-
+    if value is True:
         return (
-            f"{EMOJI['approved']} `ONLINE`"
+            f"{EMOJI['approved']} "
+            "`ONLINE`"
         )
 
-    if healthy is False:
-
+    if value is False:
         return (
-            f"{EMOJI['denied']} `OFFLINE`"
+            f"{EMOJI['denied']} "
+            "`OFFLINE`"
         )
 
     return (
-        f"{EMOJI['question']} `UNKNOWN`"
+        f"{EMOJI['question']} "
+        "`UNKNOWN`"
     )
 
-
-async def fake_loading(
-    interaction: discord.Interaction,
-    message: str,
-    delay: float,
-) -> None:
-
-    """
-    Creates a consistent fake loading process.
-
-    This is intentionally visual only and does not perform
-    unnecessary backend work.
-    """
-
-    try:
-
-        if not interaction.response.is_done():
-
-            await interaction.response.send_message(
-                f"{EMOJI['loading']} {message}",
-                ephemeral=True,
-            )
-
-        else:
-
-            await interaction.followup.send(
-                f"{EMOJI['loading']} {message}",
-                ephemeral=True,
-            )
-
-        await asyncio.sleep(
-            delay
-        )
-
-    except discord.HTTPException:
-
-        await asyncio.sleep(
-            delay
-        )
-
-
-async def defer_loading(
-    interaction: discord.Interaction,
-    delay: float,
-) -> None:
-
-    if not interaction.response.is_done():
-
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-    await asyncio.sleep(
-        delay
-    )
-
-
-# ============================================================
-# EMBED FACTORY
-# ============================================================
 
 class EmbedFactory:
 
     @staticmethod
     def base(
-        *,
         title: str,
         description: Optional[str] = None,
         color: discord.Colour = discord.Colour.blurple(),
@@ -380,12 +268,9 @@ class EmbedFactory:
     ) -> discord.Embed:
 
         return EmbedFactory.base(
-            title=(
-                f"{EMOJI['approved']} "
-                f"{title}"
-            ),
-            description=description,
-            color=discord.Colour.green(),
+            f"{EMOJI['approved']} {title}",
+            description,
+            discord.Colour.green(),
         )
 
     @staticmethod
@@ -395,12 +280,9 @@ class EmbedFactory:
     ) -> discord.Embed:
 
         return EmbedFactory.base(
-            title=(
-                f"{EMOJI['error']} "
-                f"{title}"
-            ),
-            description=description,
-            color=discord.Colour.red(),
+            f"{EMOJI['error']} {title}",
+            description,
+            discord.Colour.red(),
         )
 
     @staticmethod
@@ -410,18 +292,11 @@ class EmbedFactory:
     ) -> discord.Embed:
 
         return EmbedFactory.base(
-            title=(
-                f"{EMOJI['question']} "
-                f"{title}"
-            ),
-            description=description,
-            color=discord.Colour.orange(),
+            f"{EMOJI['question']} {title}",
+            description,
+            discord.Colour.orange(),
         )
 
-
-# ============================================================
-# OWNER CHECK
-# ============================================================
 
 def owner_only():
 
@@ -432,28 +307,16 @@ def owner_only():
         if interaction.user.id in OWNERS:
             return True
 
-        message = (
-            f"{EMOJI['denied']} "
-            "**Access Denied**\n\n"
-            "This system panel is restricted to "
-            "the Lunar bot owners."
-        )
-
         try:
-
-            if not interaction.response.is_done():
-
-                await interaction.response.send_message(
-                    message,
-                    ephemeral=True,
-                )
-
-            else:
-
-                await interaction.followup.send(
-                    message,
-                    ephemeral=True,
-                )
+            await interaction.response.send_message(
+                (
+                    f"{EMOJI['denied']} "
+                    "**Access Denied**\n\n"
+                    "This system panel is restricted "
+                    "to the Lunar bot owners."
+                ),
+                ephemeral=True,
+            )
 
         except discord.HTTPException:
             pass
@@ -465,13 +328,391 @@ def owner_only():
     )
 
 
-# ============================================================
-# LOG VIEW
-# ============================================================
+class PanelView(discord.ui.View):
 
-class LogView(
-    discord.ui.View
-):
+    def __init__(
+        self,
+        cog: "System",
+        owner_id: int,
+        *,
+        back: bool = True,
+        timeout: float = 600,
+        root_interaction: Optional[discord.Interaction] = None,
+    ) -> None:
+
+        super().__init__(
+            timeout=timeout
+        )
+
+        self.cog = cog
+        self.owner_id = owner_id
+        self.root_interaction = root_interaction
+
+        if back:
+            self._add_navigation()
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction,
+    ) -> bool:
+
+        if interaction.user.id != self.owner_id:
+
+            try:
+                await interaction.response.send_message(
+                    (
+                        f"{EMOJI['denied']} "
+                        "Only the owner who opened "
+                        "this panel can use these controls."
+                    ),
+                    ephemeral=True,
+                )
+
+            except discord.HTTPException:
+                pass
+
+            return False
+
+        return True
+
+    def _add_navigation(
+        self,
+    ) -> None:
+
+        back = discord.ui.Button(
+            label="Dashboard",
+            emoji=EMOJI["left"],
+            style=discord.ButtonStyle.secondary,
+            row=4,
+        )
+
+        back.callback = self._back
+        self.add_item(back)
+
+        close = discord.ui.Button(
+            label="Close",
+            emoji=EMOJI["denied"],
+            style=discord.ButtonStyle.danger,
+            row=4,
+        )
+
+        close.callback = self._close
+        self.add_item(close)
+
+    async def _back(
+        self,
+        interaction: discord.Interaction,
+    ) -> None:
+
+        await self.cog.render(
+            interaction,
+            self.cog.build_dashboard_embed(),
+            SystemDashboard(
+                self.cog,
+                self.owner_id,
+                root_interaction=self.root_interaction,
+            ),
+        )
+
+        self.stop()
+
+    async def _close(
+        self,
+        interaction: discord.Interaction,
+    ) -> None:
+
+        for item in self.children:
+
+            if isinstance(
+                item,
+                discord.ui.Button,
+            ):
+                item.disabled = True
+
+        await interaction.response.edit_message(
+            view=self
+        )
+
+        self.stop()
+
+    async def on_timeout(
+        self,
+    ) -> None:
+
+        for item in self.children:
+
+            if isinstance(
+                item,
+                discord.ui.Button,
+            ):
+                item.disabled = True
+
+
+class SystemDashboard(PanelView):
+
+    def __init__(
+        self,
+        cog: "System",
+        owner_id: int,
+        *,
+        root_interaction: Optional[discord.Interaction] = None,
+    ) -> None:
+
+        super().__init__(
+            cog,
+            owner_id,
+            back=False,
+            root_interaction=root_interaction,
+        )
+
+        self._build()
+
+    def _add(
+        self,
+        label: str,
+        emoji: str,
+        callback,
+        row: int,
+        style=discord.ButtonStyle.secondary,
+    ) -> None:
+
+        button = discord.ui.Button(
+            label=label,
+            emoji=emoji,
+            style=style,
+            row=row,
+        )
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _build(
+        self,
+    ) -> None:
+
+        self._add(
+            "Diagnostics",
+            EMOJI["diagnostics"],
+            self._diagnostics,
+            0,
+            discord.ButtonStyle.primary,
+        )
+
+        self._add(
+            "Logs",
+            EMOJI["logs"],
+            self._logs,
+            0,
+        )
+
+        self._add(
+            "Database",
+            EMOJI["db"],
+            self._database,
+            0,
+        )
+
+        self._add(
+            "Cache",
+            EMOJI["cache"],
+            self._cache,
+            0,
+        )
+
+        self._add(
+            "Gateway",
+            EMOJI["gateway"],
+            self._gateway,
+            1,
+        )
+
+        self._add(
+            "System",
+            EMOJI["system"],
+            self._system,
+            1,
+        )
+
+        self._add(
+            "Health",
+            EMOJI["health"],
+            self._health,
+            1,
+            discord.ButtonStyle.success,
+        )
+
+        self._add(
+            "Commands",
+            EMOJI["commands"],
+            self._commands,
+            1,
+        )
+
+        self._add(
+            "Maintenance",
+            EMOJI["maintenance"],
+            self._maintenance,
+            2,
+            discord.ButtonStyle.danger,
+        )
+
+        self._add(
+            "Eval",
+            EMOJI["eval"],
+            self._eval,
+            2,
+            discord.ButtonStyle.primary,
+        )
+
+        self._add(
+            "Security",
+            EMOJI["security"],
+            self._security,
+            2,
+        )
+
+        self._add(
+            "Refresh",
+            EMOJI["loading"],
+            self._refresh,
+            2,
+            discord.ButtonStyle.success,
+        )
+
+        self._add(
+            "Close",
+            EMOJI["denied"],
+            self._close,
+            3,
+            discord.ButtonStyle.danger,
+        )
+
+    async def _diagnostics(
+        self,
+        interaction,
+    ):
+        await self.cog.show_diagnostics(
+            interaction
+        )
+
+    async def _logs(
+        self,
+        interaction,
+    ):
+        await self.cog.show_logs(
+            interaction
+        )
+
+    async def _database(
+        self,
+        interaction,
+    ):
+        await self.cog.show_database(
+            interaction
+        )
+
+    async def _cache(
+        self,
+        interaction,
+    ):
+        await self.cog.show_cache(
+            interaction
+        )
+
+    async def _gateway(
+        self,
+        interaction,
+    ):
+        await self.cog.show_gateway(
+            interaction
+        )
+
+    async def _system(
+        self,
+        interaction,
+    ):
+        await self.cog.show_system(
+            interaction
+        )
+
+    async def _health(
+        self,
+        interaction,
+    ):
+        await self.cog.show_health(
+            interaction
+        )
+
+    async def _commands(
+        self,
+        interaction,
+    ):
+        await self.cog.show_command_stats(
+            interaction
+        )
+
+    async def _maintenance(
+        self,
+        interaction,
+    ):
+        await self.cog.open_maintenance(
+            interaction
+        )
+
+    async def _eval(
+        self,
+        interaction,
+    ):
+
+        await interaction.response.send_modal(
+            EvalModal(
+                self.cog,
+                self.owner_id,
+                root_interaction=(
+                    self.root_interaction
+                    or interaction
+                ),
+            )
+        )
+
+    async def _security(
+        self,
+        interaction,
+    ):
+        await self.cog.show_security(
+            interaction
+        )
+
+    async def _refresh(
+        self,
+        interaction,
+    ):
+        await self.cog.show_dashboard(
+            interaction,
+            loading=True,
+        )
+
+    async def _close(
+        self,
+        interaction,
+    ):
+
+        for item in self.children:
+
+            if isinstance(
+                item,
+                discord.ui.Button,
+            ):
+                item.disabled = True
+
+        await interaction.response.edit_message(
+            view=self
+        )
+
+        self.stop()
+
+
+class LogView(PanelView):
 
     def __init__(
         self,
@@ -481,17 +722,19 @@ class LogView(
         *,
         level_name: str = "all",
         per_page: int = 8,
+        page: int = 0,
+        root_interaction: Optional[discord.Interaction] = None,
     ) -> None:
 
         super().__init__(
-            timeout=300
+            cog,
+            owner_id,
+            root_interaction=root_interaction,
         )
 
-        self.cog = cog
-        self.owner_id = owner_id
         self.level_name = level_name
         self.per_page = per_page
-        self.page = 0
+        self.page = page
 
         self.entries = (
             entries
@@ -509,83 +752,68 @@ class LogView(
             (
                 len(self.entries) - 1
             )
-            // self.per_page,
+            // per_page,
         )
 
-        self.sync_buttons()
+        self._controls()
 
-    # ========================================================
-    # CHECK
-    # ========================================================
-
-    async def interaction_check(
-        self,
-        interaction: discord.Interaction,
-    ) -> bool:
-
-        if interaction.user.id != self.owner_id:
-
-            await interaction.response.send_message(
-                f"{EMOJI['denied']} "
-                "Only the owner who opened this panel "
-                "can use these controls.",
-                ephemeral=True,
-            )
-
-            return False
-
-        return True
-
-    # ========================================================
-    # BUTTON STATE
-    # ========================================================
-
-    def sync_buttons(
+    def _controls(
         self,
     ) -> None:
 
-        self.previous_button.disabled = (
-            self.page <= 0
+        previous = discord.ui.Button(
+            label="Previous",
+            emoji=EMOJI["left"],
+            style=discord.ButtonStyle.secondary,
+            row=0,
+            disabled=self.page <= 0,
         )
 
-        self.next_button.disabled = (
-            self.page >= self.max_page
+        previous.callback = self.previous
+        self.add_item(previous)
+
+        next_button = discord.ui.Button(
+            label="Next",
+            emoji=EMOJI["right"],
+            style=discord.ButtonStyle.secondary,
+            row=0,
+            disabled=self.page >= self.max_page,
         )
 
-    # ========================================================
-    # EMBED
-    # ========================================================
+        next_button.callback = self.next
+        self.add_item(next_button)
+
+        refresh = discord.ui.Button(
+            label="Refresh",
+            emoji=EMOJI["loading"],
+            style=discord.ButtonStyle.primary,
+            row=0,
+        )
+
+        refresh.callback = self.refresh
+        self.add_item(refresh)
 
     def build_embed(
         self,
     ) -> discord.Embed:
 
-        start = (
-            self.page
-            * self.per_page
-        )
-
-        end = (
-            start
-            + self.per_page
-        )
-
-        page_entries = self.entries[
-            start:end
+        entries = self.entries[
+            self.page * self.per_page:
+            (self.page + 1) * self.per_page
         ]
 
         embed = EmbedFactory.base(
-            title=(
+            (
                 f"{EMOJI['logs']} "
                 "System Logs"
             ),
-            description=(
+            (
                 f"Filter: `{self.level_name}`\n"
                 f"Entries: `{len(self.entries)}`"
             ),
         )
 
-        if not page_entries:
+        if not entries:
 
             embed.description = (
                 f"Filter: `{self.level_name}`\n\n"
@@ -594,35 +822,33 @@ class LogView(
 
             return embed
 
-        lines: list[str] = []
+        lines = []
 
-        for entry in page_entries:
+        symbols = {
+            "DEBUG": "DBG",
+            "INFO": "INF",
+            "WARNING": "WRN",
+            "ERROR": "ERR",
+            "CRITICAL": "CRT",
+        }
 
-            timestamp = int(
+        for entry in entries:
+
+            ts = int(
                 entry.timestamp.timestamp()
             )
 
-            level_name = (
+            level = symbols.get(
                 logging.getLevelName(
                     entry.level
-                )
-            )
-
-            level_symbol = {
-                "DEBUG": "DBG",
-                "INFO": "INF",
-                "WARNING": "WRN",
-                "ERROR": "ERR",
-                "CRITICAL": "CRT",
-            }.get(
-                level_name,
+                ),
                 "LOG",
             )
 
             lines.append(
                 (
-                    f"`{level_symbol:<3}` "
-                    f"<t:{timestamp}:T> "
+                    f"`{level:<3}` "
+                    f"<t:{ts}:T> "
                     f"`{truncate(entry.logger_name, 28)}`\n"
                     f"> {truncate(entry.message, 220)}"
                 )
@@ -630,8 +856,8 @@ class LogView(
 
         embed.add_field(
             name=(
-                f"Page {self.page + 1}"
-                f" / "
+                f"Page {self.page + 1} "
+                f"/ "
                 f"{self.max_page + 1}"
             ),
             value="\n\n".join(lines),
@@ -640,508 +866,339 @@ class LogView(
 
         return embed
 
-    # ========================================================
-    # PREVIOUS
-    # ========================================================
-
-    @discord.ui.button(
-        label="Previous",
-        emoji=EMOJI["left"],
-        style=discord.ButtonStyle.secondary,
-        row=0,
-    )
-    async def previous_button(
+    async def previous(
         self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
+        interaction,
     ) -> None:
 
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            0.45
-        )
-
-        self.page = max(
+        page = max(
             0,
             self.page - 1,
         )
 
-        self.sync_buttons()
-
-        await interaction.edit_original_response(
-            embed=self.build_embed(),
-            view=self,
+        view = LogView(
+            self.cog,
+            self.owner_id,
+            self.entries,
+            level_name=self.level_name,
+            per_page=self.per_page,
+            page=page,
+            root_interaction=self.root_interaction,
         )
 
-    # ========================================================
-    # NEXT
-    # ========================================================
+        await self.cog.render(
+            interaction,
+            view.build_embed(),
+            view,
+        )
 
-    @discord.ui.button(
-        label="Next",
-        emoji=EMOJI["right"],
-        style=discord.ButtonStyle.secondary,
-        row=0,
-    )
-    async def next_button(
+    async def next(
         self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
+        interaction,
     ) -> None:
 
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            0.45
-        )
-
-        self.page = min(
+        page = min(
             self.max_page,
             self.page + 1,
         )
 
-        self.sync_buttons()
-
-        await interaction.edit_original_response(
-            embed=self.build_embed(),
-            view=self,
+        view = LogView(
+            self.cog,
+            self.owner_id,
+            self.entries,
+            level_name=self.level_name,
+            per_page=self.per_page,
+            page=page,
+            root_interaction=self.root_interaction,
         )
 
-    # ========================================================
-    # REFRESH
-    # ========================================================
+        await self.cog.render(
+            interaction,
+            view.build_embed(),
+            view,
+        )
 
-    @discord.ui.button(
-        label="Refresh",
-        emoji=EMOJI["loading"],
-        style=discord.ButtonStyle.primary,
-        row=0,
-    )
-    async def refresh_button(
+    async def refresh(
         self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
+        interaction,
     ) -> None:
 
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            LOGS_LOADING
-        )
-
-        self.entries = MEMORY_HANDLER.recent(
+        entries = MEMORY_HANDLER.recent(
             limit=100,
             level=LOG_LEVELS.get(
                 self.level_name
             ),
         )
 
-        self.max_page = max(
+        max_page = max(
             0,
             (
-                len(self.entries) - 1
+                len(entries) - 1
             )
             // self.per_page,
         )
 
-        self.page = min(
+        page = min(
             self.page,
-            self.max_page,
+            max_page,
         )
 
-        self.sync_buttons()
-
-        await interaction.edit_original_response(
-            embed=self.build_embed(),
-            view=self,
+        view = LogView(
+            self.cog,
+            self.owner_id,
+            entries,
+            level_name=self.level_name,
+            per_page=self.per_page,
+            page=page,
+            root_interaction=self.root_interaction,
         )
 
-    # ========================================================
-    # BACK
-    # ========================================================
-
-    @discord.ui.button(
-        label="Dashboard",
-        emoji=EMOJI["left"],
-        style=discord.ButtonStyle.secondary,
-        row=1,
-    )
-    async def dashboard_button(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            0.65
-        )
-
-        await self.cog.show_dashboard(
+        await self.cog.render(
             interaction,
-            edit=True,
+            view.build_embed(),
+            view,
+            delay=LOGS_LOADING,
         )
 
-        self.stop()
 
-    # ========================================================
-    # CLOSE
-    # ========================================================
+EVAL_PAGES = [
+    (
+        "**Bot**\n"
+        "```py\n"
+        "bot\n"
+        "bot.user\n"
+        "bot.user.name\n"
+        "bot.user.id\n"
+        "bot.latency\n"
+        "bot.guilds\n"
+        "bot.users\n"
+        "bot.application_id\n"
+        "bot.intents\n"
+        "bot.extensions\n"
+        "```"
+    ),
+    (
+        "**Guild**\n"
+        "```py\n"
+        "interaction.guild.name\n"
+        "interaction.guild.id\n"
+        "interaction.guild.owner_id\n"
+        "interaction.guild.member_count\n"
+        "interaction.guild.created_at\n"
+        "interaction.guild.icon\n"
+        "interaction.guild.banner\n"
+        "interaction.guild.features\n"
+        "interaction.guild.verification_level\n"
+        "interaction.guild.premium_tier\n"
+        "```"
+    ),
+    (
+        "**User**\n"
+        "```py\n"
+        "interaction.user.name\n"
+        "interaction.user.id\n"
+        "interaction.user.created_at\n"
+        "interaction.user.avatar\n"
+        "interaction.user.display_avatar\n"
+        "interaction.user.mention\n"
+        "interaction.user.bot\n"
+        "```"
+    ),
+    (
+        "**Channels**\n"
+        "```py\n"
+        "interaction.channel\n"
+        "interaction.channel.id\n"
+        "interaction.channel.name\n"
+        "interaction.channel.type\n"
+        "interaction.channel.created_at\n"
+        "```"
+    ),
+    (
+        "**Members / Roles**\n"
+        "```py\n"
+        "len(interaction.guild.members)\n"
+        "[m.name for m in interaction.guild.members]\n"
+        "[m for m in interaction.guild.members if m.bot]\n"
+        "[r.name for r in interaction.guild.roles]\n"
+        "[r.id for r in interaction.guild.roles]\n"
+        "interaction.user.roles\n"
+        "interaction.user.guild_permissions\n"
+        "```"
+    ),
+    (
+        "**Bot Collections**\n"
+        "```py\n"
+        "len(bot.guilds)\n"
+        "len(bot.users)\n"
+        "len(bot.emojis)\n"
+        "[g.name for g in bot.guilds]\n"
+        "[g.id for g in bot.guilds]\n"
+        "[u.name for u in bot.users]\n"
+        "[e.name for e in bot.emojis]\n"
+        "```"
+    ),
+    (
+        "**System**\n"
+        "```py\n"
+        "import os\n"
+        "import sys\n"
+        "import platform\n"
+        "os.getpid()\n"
+        "platform.system()\n"
+        "platform.platform()\n"
+        "platform.machine()\n"
+        "sys.version\n"
+        "sys.platform\n"
+        "```"
+    ),
+    (
+        "**Database**\n"
+        "```py\n"
+        "db\n"
+        "db.users\n"
+        "db.guilds\n"
+        "db.github\n"
+        "db.stats\n"
+        "db.command_stats\n"
+        "db.giveaways\n"
+        "```"
+    ),
+    (
+        "**Advanced**\n"
+        "```py\n"
+        "type(bot)\n"
+        "type(interaction)\n"
+        "dir(bot)\n"
+        "dir(interaction)\n"
+        "bot.extensions\n"
+        "bot.cogs\n"
+        "bot.tree.get_commands()\n"
+        "```"
+    ),
+    (
+        "**Examples**\n"
+        "```py\n"
+        "bot.user\n"
+        "bot.latency\n"
+        "len(bot.guilds)\n"
+        "len(bot.users)\n"
+        "len(bot.emojis)\n"
+        "interaction.guild.name\n"
+        "interaction.user.name\n"
+        "EMOJI['lunar']\n"
+        "```"
+    ),
+]
 
-    @discord.ui.button(
-        label="Close",
-        emoji=EMOJI["denied"],
-        style=discord.ButtonStyle.danger,
-        row=1,
-    )
-    async def close_button(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
 
-        for child in self.children:
-
-            if isinstance(
-                child,
-                discord.ui.Button,
-            ):
-                child.disabled = True
-
-        await interaction.response.edit_message(
-            view=self
-        )
-
-        self.stop()
-
-    # ========================================================
-    # TIMEOUT
-    # ========================================================
-
-    async def on_timeout(
-        self,
-    ) -> None:
-
-        for child in self.children:
-
-            if isinstance(
-                child,
-                discord.ui.Button,
-            ):
-                child.disabled = True
-
-
-# ============================================================
-# SYSTEM DASHBOARD
-# ============================================================
-
-class SystemDashboard(
-    discord.ui.View
+class EvalHelpView(
+    PanelView
 ):
 
     def __init__(
         self,
         cog: "System",
         owner_id: int,
+        page: int = 0,
+        *,
+        root_interaction=None,
     ) -> None:
 
         super().__init__(
-            timeout=600
+            cog,
+            owner_id,
+            root_interaction=root_interaction,
         )
 
-        self.cog = cog
-        self.owner_id = owner_id
-
-    # ========================================================
-    # OWNER CHECK
-    # ========================================================
-
-    async def interaction_check(
-        self,
-        interaction: discord.Interaction,
-    ) -> bool:
-
-        if interaction.user.id != self.owner_id:
-
-            await interaction.response.send_message(
-                f"{EMOJI['denied']} "
-                "Only the owner who opened this dashboard "
-                "can use these controls.",
-                ephemeral=True,
-            )
-
-            return False
-
-        return True
-
-    # ========================================================
-    # ROW 0
-    # ========================================================
-
-    @discord.ui.button(
-        label="Diagnostics",
-        emoji=EMOJI["diagnostics"],
-        style=discord.ButtonStyle.primary,
-        row=0,
-    )
-    async def diagnostics(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-
-        await self.cog.show_diagnostics(
-            interaction
+        self.page = (
+            page
+            % len(EVAL_PAGES)
         )
 
-    @discord.ui.button(
-        label="Logs",
-        emoji=EMOJI["logs"],
-        style=discord.ButtonStyle.secondary,
-        row=0,
-    )
-    async def logs(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-
-        await self.cog.show_logs(
-            interaction
+        previous = discord.ui.Button(
+            label="Previous",
+            emoji=EMOJI["left"],
+            style=discord.ButtonStyle.secondary,
+            row=0,
         )
 
-    @discord.ui.button(
-        label="Database",
-        emoji=EMOJI["db"],
-        style=discord.ButtonStyle.secondary,
-        row=0,
-    )
-    async def database(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
+        previous.callback = self.previous
+        self.add_item(previous)
 
-        await self.cog.show_database(
-            interaction
+        next_button = discord.ui.Button(
+            label="Next",
+            emoji=EMOJI["right"],
+            style=discord.ButtonStyle.secondary,
+            row=0,
         )
 
-    @discord.ui.button(
-        label="Cache",
-        emoji=EMOJI["cache"],
-        style=discord.ButtonStyle.secondary,
-        row=0,
-    )
-    async def cache(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
+        next_button.callback = self.next
+        self.add_item(next_button)
 
-        await self.cog.show_cache(
-            interaction
+    def build_embed(
+        self,
+    ):
+
+        embed = EmbedFactory.base(
+            (
+                f"{EMOJI['eval']} "
+                "Lunar Eval System"
+            ),
+            EVAL_PAGES[self.page],
+            discord.Colour.from_rgb(
+                212,
+                175,
+                55,
+            ),
         )
 
-    # ========================================================
-    # ROW 1
-    # ========================================================
-
-    @discord.ui.button(
-        label="Gateway",
-        emoji=EMOJI["gateway"],
-        style=discord.ButtonStyle.secondary,
-        row=1,
-    )
-    async def gateway(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-
-        await self.cog.show_gateway(
-            interaction
-        )
-
-    @discord.ui.button(
-        label="System",
-        emoji=EMOJI["system"],
-        style=discord.ButtonStyle.secondary,
-        row=1,
-    )
-    async def system(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-
-        await self.cog.show_system(
-            interaction
-        )
-
-    @discord.ui.button(
-        label="Health",
-        emoji=EMOJI["health"],
-        style=discord.ButtonStyle.success,
-        row=1,
-    )
-    async def health(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-
-        await self.cog.show_health(
-            interaction
-        )
-
-    @discord.ui.button(
-        label="Commands",
-        emoji=EMOJI["commands"],
-        style=discord.ButtonStyle.secondary,
-        row=1,
-    )
-    async def commands_button(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-
-        await self.cog.show_command_stats(
-            interaction
-        )
-
-    # ========================================================
-    # ROW 2
-    # ========================================================
-
-    @discord.ui.button(
-        label="Maintenance",
-        emoji=EMOJI["maintenance"],
-        style=discord.ButtonStyle.danger,
-        row=2,
-    )
-    async def maintenance(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-
-        await self.cog.open_maintenance(
-            interaction
-        )
-
-    @discord.ui.button(
-        label="Eval",
-        emoji=EMOJI["eval"],
-        style=discord.ButtonStyle.primary,
-        row=2,
-    )
-    async def eval_button(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-
-        await interaction.response.send_modal(
-            EvalModal(
-                self.cog,
-                self.owner_id,
+        embed.set_footer(
+            text=(
+                f"Page {self.page + 1}"
+                f"/{len(EVAL_PAGES)}"
+                " • Lunar Developer Console"
             )
         )
 
-    @discord.ui.button(
-        label="Security",
-        emoji=EMOJI["security"],
-        style=discord.ButtonStyle.secondary,
-        row=2,
-    )
-    async def security(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
+        return embed
 
-        await self.cog.show_security(
-            interaction
+    async def previous(
+        self,
+        interaction,
+    ):
+
+        view = EvalHelpView(
+            self.cog,
+            self.owner_id,
+            self.page - 1,
+            root_interaction=self.root_interaction,
         )
 
-    @discord.ui.button(
-        label="Refresh",
-        emoji=EMOJI["loading"],
-        style=discord.ButtonStyle.success,
-        row=2,
-    )
-    async def refresh(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-
-        await self.cog.show_dashboard(
+        await self.cog.render(
             interaction,
-            edit=True,
+            view.build_embed(),
+            view,
         )
 
-    # ========================================================
-    # ROW 3
-    # ========================================================
-
-    @discord.ui.button(
-        label="Close",
-        emoji=EMOJI["denied"],
-        style=discord.ButtonStyle.danger,
-        row=3,
-    )
-    async def close(
+    async def next(
         self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
+        interaction,
+    ):
 
-        for item in self.children:
-
-            if isinstance(
-                item,
-                discord.ui.Button,
-            ):
-                item.disabled = True
-
-        await interaction.response.edit_message(
-            view=self
+        view = EvalHelpView(
+            self.cog,
+            self.owner_id,
+            self.page + 1,
+            root_interaction=self.root_interaction,
         )
 
-        self.stop()
+        await self.cog.render(
+            interaction,
+            view.build_embed(),
+            view,
+        )
 
-    async def on_timeout(
-        self,
-    ) -> None:
-
-        for item in self.children:
-
-            if isinstance(
-                item,
-                discord.ui.Button,
-            ):
-                item.disabled = True
-
-
-# ============================================================
-# MAINTENANCE MODAL
-# ============================================================
 
 class MaintenanceModal(
     discord.ui.Modal,
@@ -1150,9 +1207,7 @@ class MaintenanceModal(
 
     reason = discord.ui.TextInput(
         label="Maintenance Reason",
-        placeholder=(
-            "Example: Database maintenance..."
-        ),
+        placeholder="Example: Database maintenance...",
         style=discord.TextStyle.paragraph,
         required=False,
         max_length=500,
@@ -1162,12 +1217,15 @@ class MaintenanceModal(
         self,
         cog: "System",
         owner_id: int,
+        *,
+        root_interaction=None,
     ) -> None:
 
         super().__init__()
 
         self.cog = cog
         self.owner_id = owner_id
+        self.root_interaction = root_interaction
 
     async def on_submit(
         self,
@@ -1177,8 +1235,10 @@ class MaintenanceModal(
         if interaction.user.id != self.owner_id:
 
             await interaction.response.send_message(
-                f"{EMOJI['denied']} "
-                "You cannot use this modal.",
+                (
+                    f"{EMOJI['denied']} "
+                    "You cannot use this modal."
+                ),
                 ephemeral=True,
             )
 
@@ -1194,25 +1254,25 @@ class MaintenanceModal(
         )
 
         reason = (
-            str(self.reason.value).strip()
-            or "Lunar is currently undergoing maintenance."
+            str(
+                self.reason.value
+            ).strip()
+            or
+            "Lunar is currently undergoing maintenance."
+        )
+
+        target = (
+            self.root_interaction
+            or interaction
         )
 
         try:
 
             if db.variables is None:
 
-                await interaction.followup.send(
-                    embed=EmbedFactory.error(
-                        "Database Unavailable",
-                        (
-                            "The maintenance repository is unavailable."
-                        ),
-                    ),
-                    ephemeral=True,
+                raise RuntimeError(
+                    "The maintenance repository is unavailable."
                 )
-
-                return
 
             await db.variables.set_maintenance(
                 True,
@@ -1236,7 +1296,7 @@ class MaintenanceModal(
                         target_id=None,
                         reason=reason,
                         metadata={
-                            "source": "system.py",
+                            "source": "system.py"
                         },
                     )
 
@@ -1246,49 +1306,42 @@ class MaintenanceModal(
                     "Failed to audit maintenance enable"
                 )
 
-            logger.warning(
-                "Maintenance mode ENABLED by %s | %s",
-                interaction.user.id,
-                reason,
-            )
-
-            await interaction.followup.send(
-                embed=EmbedFactory.success(
-                    "Maintenance Enabled",
-                    (
-                        "Lunar maintenance mode is now active.\n\n"
-                        f"**Reason:**\n"
-                        f"> {truncate(reason, 700)}\n\n"
-                        f"{EMOJI['security']} "
-                        "The state has been persisted to ScyllaDB."
-                    ),
+            embed = EmbedFactory.success(
+                "Maintenance Enabled",
+                (
+                    "Lunar maintenance mode is now active.\n\n"
+                    f"**Reason:**\n"
+                    f"> {truncate(reason, 700)}\n\n"
+                    f"{EMOJI['security']} "
+                    "The state has been persisted to ScyllaDB."
                 ),
-                ephemeral=True,
             )
 
         except Exception as exc:
 
             logger.exception(
-                "Failed to enable maintenance mode"
+                "Failed to enable maintenance"
             )
 
-            await interaction.followup.send(
-                embed=EmbedFactory.error(
-                    "Maintenance Failed",
-                    (
-                        "The maintenance state could not be saved.\n\n"
-                        f"```text\n"
-                        f"{truncate(exc, 1200)}"
-                        f"\n```"
-                    ),
+            embed = EmbedFactory.error(
+                "Maintenance Failed",
+                (
+                    "```text\n"
+                    f"{truncate(exc, 1200)}"
+                    "\n```"
                 ),
-                ephemeral=True,
             )
 
+        await target.edit_original_response(
+            content=None,
+            embed=embed,
+            view=SystemMaintenanceView(
+                self.cog,
+                self.owner_id,
+                root_interaction=self.root_interaction,
+            ),
+        )
 
-# ============================================================
-# EVAL MODAL
-# ============================================================
 
 class EvalModal(
     discord.ui.Modal,
@@ -1311,12 +1364,15 @@ class EvalModal(
         self,
         cog: "System",
         owner_id: int,
+        *,
+        root_interaction=None,
     ) -> None:
 
         super().__init__()
 
         self.cog = cog
         self.owner_id = owner_id
+        self.root_interaction = root_interaction
 
     async def on_submit(
         self,
@@ -1326,8 +1382,10 @@ class EvalModal(
         if interaction.user.id != self.owner_id:
 
             await interaction.response.send_message(
-                f"{EMOJI['denied']} "
-                "You cannot use this developer console.",
+                (
+                    f"{EMOJI['denied']} "
+                    "You cannot use this developer console."
+                ),
                 ephemeral=True,
             )
 
@@ -1342,23 +1400,34 @@ class EvalModal(
             EVAL_LOADING
         )
 
-        code = str(
-            self.code.value
-        ).strip()
+        code = (
+            str(
+                self.code.value
+            ).strip()
+        )
 
-        if code.startswith("```"):
+        if code.startswith(
+            "```"
+        ):
 
-            lines = code.splitlines()
+            lines = (
+                code.splitlines()[1:]
+            )
 
-            if lines:
-                lines = lines[1:]
+            if (
+                lines
+                and
+                lines[-1].strip()
+                == "```"
+            ):
 
-            if lines and lines[-1].strip() == "```":
                 lines.pop()
 
-            code = "\n".join(lines)
+            code = "\n".join(
+                lines
+            )
 
-        environment = {
+        env = {
             "bot": self.cog.bot,
             "ctx": None,
             "message": None,
@@ -1378,42 +1447,19 @@ class EvalModal(
             result = eval(
                 code,
                 {
-                    "__builtins__": {},
+                    "__builtins__": {}
                 },
-                environment,
+                env,
             )
 
-            if result is None:
-
-                result_text = "None"
-
-            elif isinstance(
-                result,
-                str,
-            ):
-
-                result_text = result
-
-            else:
-
-                try:
-
-                    result_text = repr(
-                        result
-                    )
-
-                except Exception:
-
-                    result_text = str(
-                        result
-                    )
-
-            if len(result_text) > 3900:
-
-                result_text = (
-                    result_text[:3900]
-                    + "\n..."
-                )
+            text = truncate(
+                (
+                    "None"
+                    if result is None
+                    else repr(result)
+                ),
+                3900,
+            )
 
             embed = EmbedFactory.success(
                 "Eval Result",
@@ -1427,7 +1473,7 @@ class EvalModal(
                 ),
                 value=(
                     "```py\n"
-                    f"{result_text}"
+                    f"{text}"
                     "\n```"
                 ),
                 inline=False,
@@ -1440,30 +1486,18 @@ class EvalModal(
                 )
             )
 
-            await interaction.followup.send(
-                embed=embed,
-                ephemeral=True,
-            )
-
-        except Exception as error:
-
-            error_text = (
-                f"{type(error).__name__}: "
-                f"{error}"
-            )
-
-            if len(error_text) > 3900:
-
-                error_text = (
-                    error_text[:3900]
-                    + "\n..."
-                )
+        except Exception as exc:
 
             embed = EmbedFactory.error(
                 "Eval Error",
                 (
                     "```py\n"
-                    f"{error_text}"
+                    f"{truncate(
+                        type(exc).__name__
+                        + ": "
+                        + str(exc),
+                        3900,
+                    )}"
                     "\n```"
                 ),
             )
@@ -1475,338 +1509,88 @@ class EvalModal(
                 )
             )
 
-            await interaction.followup.send(
-                embed=embed,
-                ephemeral=True,
-            )
+        target = (
+            self.root_interaction
+            or interaction
+        )
+
+        await target.edit_original_response(
+            content=None,
+            embed=embed,
+            view=PanelView(
+                self.cog,
+                self.owner_id,
+                root_interaction=(
+                    self.root_interaction
+                ),
+            ),
+        )
 
 
-# ============================================================
-# EVAL HELP VIEW
-# ============================================================
-
-EVAL_PAGES = [
-
-    (
-        f"{EMOJI['new1']}{EMOJI['new2']} **Bot**\n\n"
-        "```py\n"
-        "bot\n"
-        "bot.user\n"
-        "bot.user.name\n"
-        "bot.user.id\n"
-        "bot.user.avatar\n"
-        "bot.latency\n"
-        "bot.guilds\n"
-        "bot.users\n"
-        "bot.application_id\n"
-        "bot.intents\n"
-        "bot.extensions\n"
-        "```"
-    ),
-
-    (
-        f"{EMOJI['new1']}{EMOJI['new2']} **Guild**\n\n"
-        "```py\n"
-        "interaction.guild.name\n"
-        "interaction.guild.id\n"
-        "interaction.guild.owner_id\n"
-        "interaction.guild.member_count\n"
-        "interaction.guild.created_at\n"
-        "interaction.guild.icon\n"
-        "interaction.guild.banner\n"
-        "interaction.guild.features\n"
-        "interaction.guild.verification_level\n"
-        "interaction.guild.premium_tier\n"
-        "```"
-    ),
-
-    (
-        f"{EMOJI['new1']}{EMOJI['new2']} **User**\n\n"
-        "```py\n"
-        "interaction.user.name\n"
-        "interaction.user.id\n"
-        "interaction.user.created_at\n"
-        "interaction.user.avatar\n"
-        "interaction.user.display_avatar\n"
-        "interaction.user.mention\n"
-        "interaction.user.bot\n"
-        "```"
-    ),
-
-    (
-        f"{EMOJI['new1']}{EMOJI['new2']} **Channels**\n\n"
-        "```py\n"
-        "interaction.channel\n"
-        "interaction.channel.id\n"
-        "interaction.channel.name\n"
-        "interaction.channel.type\n"
-        "interaction.channel.created_at\n"
-        "```"
-    ),
-
-    (
-        f"{EMOJI['new1']}{EMOJI['new2']} **Members / Roles**\n\n"
-        "```py\n"
-        "len(interaction.guild.members)\n"
-        "[m.name for m in interaction.guild.members]\n"
-        "[m for m in interaction.guild.members if m.bot]\n"
-        "[r.name for r in interaction.guild.roles]\n"
-        "[r.id for r in interaction.guild.roles]\n"
-        "interaction.user.roles\n"
-        "interaction.user.guild_permissions\n"
-        "```"
-    ),
-
-    (
-        f"{EMOJI['new1']}{EMOJI['new2']} **Bot Collections**\n\n"
-        "```py\n"
-        "len(bot.guilds)\n"
-        "len(bot.users)\n"
-        "len(bot.emojis)\n"
-        "[g.name for g in bot.guilds]\n"
-        "[g.id for g in bot.guilds]\n"
-        "[u.name for u in bot.users]\n"
-        "[e.name for e in bot.emojis]\n"
-        "```"
-    ),
-
-    (
-        f"{EMOJI['new1']}{EMOJI['new2']} **System**\n\n"
-        "```py\n"
-        "import os\n"
-        "import sys\n"
-        "import platform\n\n"
-        "os.getpid()\n"
-        "platform.system()\n"
-        "platform.platform()\n"
-        "platform.machine()\n"
-        "sys.version\n"
-        "sys.platform\n"
-        "```"
-    ),
-
-    (
-        f"{EMOJI['new1']}{EMOJI['new2']} **Database**\n\n"
-        "```py\n"
-        "db\n"
-        "db.users\n"
-        "db.guilds\n"
-        "db.github\n"
-        "db.stats\n"
-        "db.command_stats\n"
-        "db.giveaways\n"
-        "```"
-    ),
-
-    (
-        f"{EMOJI['new1']}{EMOJI['new2']} **Advanced**\n\n"
-        "```py\n"
-        "type(bot)\n"
-        "type(interaction)\n"
-        "dir(bot)\n"
-        "dir(interaction)\n"
-        "bot.extensions\n"
-        "bot.cogs\n"
-        "bot.tree.get_commands()\n"
-        "```"
-    ),
-
-    (
-        f"{EMOJI['new1']}{EMOJI['new2']} **Examples**\n\n"
-        "```py\n"
-        "bot.user\n"
-        "bot.latency\n"
-        "len(bot.guilds)\n"
-        "len(bot.users)\n"
-        "len(bot.emojis)\n"
-        "interaction.guild.name\n"
-        "interaction.user.name\n"
-        "EMOJI['lunar']\n"
-        "```"
-    ),
-]
-
-
-# ============================================================
-# EVAL HELP VIEW
-# ============================================================
-
-class EvalHelpView(
-    discord.ui.View
+class SystemMaintenanceView(
+    PanelView
 ):
 
     def __init__(
         self,
+        cog: "System",
         owner_id: int,
+        *,
+        root_interaction=None,
     ) -> None:
 
         super().__init__(
-            timeout=180
+            cog,
+            owner_id,
+            root_interaction=root_interaction,
         )
 
-        self.owner_id = owner_id
-        self.page = 0
+        enable = discord.ui.Button(
+            label="Enable Maintenance",
+            emoji=EMOJI["maintenance"],
+            style=discord.ButtonStyle.danger,
+            row=0,
+        )
 
-    async def interaction_check(
+        enable.callback = self.enable
+        self.add_item(enable)
+
+        reason = discord.ui.Button(
+            label="Enable With Reason",
+            emoji=EMOJI["question"],
+            style=discord.ButtonStyle.secondary,
+            row=0,
+        )
+
+        reason.callback = self.enable_with_reason
+        self.add_item(reason)
+
+    async def enable(
         self,
-        interaction: discord.Interaction,
-    ) -> bool:
+        interaction,
+    ):
 
-        if interaction.user.id != self.owner_id:
+        await self.cog.enable_maintenance(
+            interaction,
+            "Lunar is currently undergoing maintenance.",
+        )
 
-            await interaction.response.send_message(
-                f"{EMOJI['denied']} "
-                "Only the owner who opened this help panel "
-                "can use it.",
-                ephemeral=True,
+    async def enable_with_reason(
+        self,
+        interaction,
+    ):
+
+        await interaction.response.send_modal(
+            MaintenanceModal(
+                self.cog,
+                self.owner_id,
+                root_interaction=(
+                    self.root_interaction
+                    or interaction
+                ),
             )
-
-            return False
-
-        return True
-
-    def build_embed(
-        self,
-    ) -> discord.Embed:
-
-        embed = EmbedFactory.base(
-            title=(
-                f"{EMOJI['eval']} "
-                "Lunar Eval System"
-            ),
-            description=EVAL_PAGES[
-                self.page
-            ],
-            color=discord.Colour.from_rgb(
-                212,
-                175,
-                55,
-            ),
         )
 
-        embed.set_footer(
-            text=(
-                f"Page {self.page + 1}"
-                f"/{len(EVAL_PAGES)}"
-                " • Lunar Developer Console"
-            )
-        )
-
-        return embed
-
-    @discord.ui.button(
-        emoji=EMOJI["left"],
-        label="Previous",
-        style=discord.ButtonStyle.secondary,
-    )
-    async def previous(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            0.45
-        )
-
-        self.page -= 1
-
-        if self.page < 0:
-
-            self.page = (
-                len(EVAL_PAGES) - 1
-            )
-
-        await interaction.edit_original_response(
-            embed=self.build_embed(),
-            view=self,
-        )
-
-    @discord.ui.button(
-        emoji=EMOJI["right"],
-        label="Next",
-        style=discord.ButtonStyle.secondary,
-    )
-    async def next(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            0.45
-        )
-
-        self.page += 1
-
-        if self.page >= len(EVAL_PAGES):
-
-            self.page = 0
-
-        await interaction.edit_original_response(
-            embed=self.build_embed(),
-            view=self,
-        )
-
-    @discord.ui.button(
-        emoji=EMOJI["left"],
-        label="Dashboard",
-        style=discord.ButtonStyle.primary,
-    )
-    async def dashboard(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            0.65
-        )
-
-        await self.cog_show_dashboard(
-            interaction
-        )
-
-    async def cog_show_dashboard(
-        self,
-        interaction: discord.Interaction,
-    ) -> None:
-
-        # This helper is replaced by assigning the
-        # cog reference below.
-        pass
-
-    async def on_timeout(
-        self,
-    ) -> None:
-
-        for child in self.children:
-
-            if isinstance(
-                child,
-                discord.ui.Button,
-            ):
-                child.disabled = True
-
-
-# ============================================================
-# SYSTEM COG
-# ============================================================
 
 class System(
     commands.Cog
@@ -1818,26 +1602,21 @@ class System(
     ) -> None:
 
         self.bot = bot
-
         self.started_at = utcnow()
 
         install_memory_handler()
 
         if not hasattr(
-            self.bot,
+            bot,
             "maintenance_mode",
         ):
-            self.bot.maintenance_mode = False
+            bot.maintenance_mode = False
 
         if not hasattr(
-            self.bot,
+            bot,
             "maintenance_reason",
         ):
-            self.bot.maintenance_reason = ""
-
-    # ========================================================
-    # COG LOAD
-    # ========================================================
+            bot.maintenance_reason = ""
 
     async def cog_load(
         self,
@@ -1867,7 +1646,10 @@ class System(
                 )
 
                 logger.info(
-                    "Maintenance state loaded | enabled=%s",
+                    (
+                        "Maintenance state loaded "
+                        "| enabled=%s"
+                    ),
                     self.bot.maintenance_mode,
                 )
 
@@ -1877,14 +1659,9 @@ class System(
                 "Failed to load maintenance state"
             )
 
-    # ========================================================
-    # METRICS
-    # ========================================================
-
     def guild_count(
         self,
-    ) -> int:
-
+    ):
         return len(
             getattr(
                 self.bot,
@@ -1895,8 +1672,7 @@ class System(
 
     def user_count(
         self,
-    ) -> int:
-
+    ):
         return len(
             getattr(
                 self.bot,
@@ -1907,8 +1683,7 @@ class System(
 
     def channel_count(
         self,
-    ) -> int:
-
+    ):
         return sum(
             len(
                 getattr(
@@ -1917,17 +1692,12 @@ class System(
                     [],
                 )
             )
-            for guild in getattr(
-                self.bot,
-                "guilds",
-                [],
-            )
+            for guild in self.bot.guilds
         )
 
     def role_count(
         self,
-    ) -> int:
-
+    ):
         return sum(
             len(
                 getattr(
@@ -1936,17 +1706,12 @@ class System(
                     [],
                 )
             )
-            for guild in getattr(
-                self.bot,
-                "guilds",
-                [],
-            )
+            for guild in self.bot.guilds
         )
 
     def emoji_count(
         self,
-    ) -> int:
-
+    ):
         return sum(
             len(
                 getattr(
@@ -1955,17 +1720,12 @@ class System(
                     [],
                 )
             )
-            for guild in getattr(
-                self.bot,
-                "guilds",
-                [],
-            )
+            for guild in self.bot.guilds
         )
 
     def thread_count(
         self,
-    ) -> int:
-
+    ):
         return sum(
             len(
                 getattr(
@@ -1974,16 +1734,71 @@ class System(
                     [],
                 )
             )
-            for guild in getattr(
-                self.bot,
-                "guilds",
-                [],
-            )
+            for guild in self.bot.guilds
         )
 
-    # ========================================================
-    # DASHBOARD EMBED
-    # ========================================================
+    async def render(
+        self,
+        interaction,
+        embed,
+        view,
+        *,
+        delay=0,
+    ) -> None:
+
+        try:
+
+            if (
+                isinstance(
+                    view,
+                    PanelView,
+                )
+                and
+                view.root_interaction is None
+            ):
+
+                view.root_interaction = (
+                    interaction
+                )
+
+            if not interaction.response.is_done():
+
+                if interaction.message is None:
+
+                    await interaction.response.defer(
+                        ephemeral=True,
+                        thinking=True,
+                    )
+
+                else:
+
+                    await interaction.response.defer()
+
+            if delay:
+                await asyncio.sleep(
+                    delay
+                )
+
+            await interaction.edit_original_response(
+                content=None,
+                embed=embed,
+                view=view,
+            )
+
+        except discord.NotFound:
+
+            logger.warning(
+                (
+                    "System panel interaction expired "
+                    "or message disappeared"
+                )
+            )
+
+        except discord.HTTPException:
+
+            logger.exception(
+                "Failed to render System panel"
+            )
 
     def build_dashboard_embed(
         self,
@@ -2010,27 +1825,22 @@ class System(
             else 0
         )
 
-        embed = discord.Embed(
-            title=(
+        embed = EmbedFactory.base(
+            (
                 f"{EMOJI['lunar']} "
                 "Lunar System Control"
             ),
-            description=(
+            (
                 f"{EMOJI['dev']} "
                 "**Owner Control Dashboard**\n\n"
                 "Monitor and control the Lunar runtime "
                 "from one centralized interface."
             ),
-            color=(
+            (
                 discord.Colour.orange()
                 if maintenance
                 else discord.Colour.blurple()
             ),
-            timestamp=utcnow(),
-        )
-
-        embed.set_footer(
-            text=COG_NAME
         )
 
         embed.add_field(
@@ -2039,7 +1849,9 @@ class System(
                 "Discord"
             ),
             value=(
-                f"{status_badge(self.bot.is_ready())}\n"
+                f"{status_badge("
+                    "self.bot.is_ready()"
+                ")}\n"
                 f"`{latency}ms` latency"
             ),
             inline=True,
@@ -2095,22 +1907,24 @@ class System(
 
         if maintenance:
 
-            reason = (
-                getattr(
-                    self.bot,
-                    "maintenance_reason",
-                    "",
-                )
-                or "No reason configured."
-            )
-
             embed.add_field(
                 name=(
                     f"{EMOJI['question']} "
                     "Maintenance Reason"
                 ),
                 value=(
-                    f"> {truncate(reason, 700)}"
+                    "> "
+                    f"{truncate("
+                        "getattr("
+                        "self.bot, "
+                        "'maintenance_reason', "
+                        "''"
+                        ")"
+                        " or "
+                        "'No reason configured.'"
+                        ", "
+                        "700"
+                    )}"
                 ),
                 inline=False,
             )
@@ -2118,18 +1932,21 @@ class System(
         if self.bot.user:
 
             embed.set_thumbnail(
-                url=self.bot.user.display_avatar.url
+                url=(
+                    self.bot.user
+                    .display_avatar
+                    .url
+                )
             )
 
         return embed
 
-    # ========================================================
-    # /SYSTEM
-    # ========================================================
-
     @app_commands.command(
         name="system",
-        description="Open the Lunar owner system control dashboard.",
+        description=(
+            "Open the Lunar owner "
+            "system control dashboard."
+        ),
     )
     @owner_only()
     async def system_command(
@@ -2137,90 +1954,62 @@ class System(
         interaction: discord.Interaction,
     ) -> None:
 
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
+        await self.render(
+            interaction,
+            self.build_dashboard_embed(),
+            SystemDashboard(
+                self,
+                interaction.user.id,
+            ),
+            delay=DASHBOARD_LOADING,
         )
-
-        await asyncio.sleep(
-            DASHBOARD_LOADING
-        )
-
-        view = SystemDashboard(
-            self,
-            interaction.user.id,
-        )
-
-        await interaction.edit_original_response(
-            embed=self.build_dashboard_embed(),
-            view=view,
-            content=None,
-        )
-
-    # ========================================================
-    # SHOW DASHBOARD
-    # ========================================================
 
     async def show_dashboard(
         self,
-        interaction: discord.Interaction,
+        interaction,
         *,
-        edit: bool = False,
-    ) -> None:
+        loading=False,
+    ):
 
-        await asyncio.sleep(
-            DASHBOARD_LOADING
+        await self.render(
+            interaction,
+            self.build_dashboard_embed(),
+            SystemDashboard(
+                self,
+                interaction.user.id,
+                root_interaction=(
+                    getattr(
+                        interaction,
+                        "message",
+                        None,
+                    )
+                    and getattr(
+                        interaction,
+                        "message",
+                        None,
+                    )
+                    or None
+                ),
+            ),
+            delay=(
+                DASHBOARD_LOADING
+                if loading
+                else 0
+            ),
         )
-
-        view = SystemDashboard(
-            self,
-            interaction.user.id,
-        )
-
-        if edit:
-
-            await interaction.edit_original_response(
-                content=None,
-                embed=self.build_dashboard_embed(),
-                view=view,
-            )
-
-        else:
-
-            await interaction.followup.send(
-                embed=self.build_dashboard_embed(),
-                view=view,
-                ephemeral=True,
-            )
-
-    # ========================================================
-    # DIAGNOSTICS
-    # ========================================================
 
     async def show_diagnostics(
         self,
-        interaction: discord.Interaction,
-    ) -> None:
+        interaction,
+    ):
 
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            DIAGNOSTICS_LOADING
-        )
-
-        db_status = {
+        status = {
             "healthy": False,
             "initialized": False,
         }
 
         try:
-
-            db_status = (
-                await db.status()
-            )
+            status = await db.status()
 
         except Exception:
 
@@ -2233,22 +2022,12 @@ class System(
             - self.started_at
         ).total_seconds()
 
-        latency = (
-            round(
-                self.bot.latency * 1000
-            )
-            if self.bot.latency >= 0
-            else 0
-        )
-
         embed = EmbedFactory.base(
-            title=(
+            (
                 f"{EMOJI['diagnostics']} "
                 "Lunar Diagnostics"
             ),
-            description=(
-                "Complete runtime diagnostic snapshot."
-            ),
+            "Complete runtime diagnostic snapshot.",
         )
 
         embed.add_field(
@@ -2260,7 +2039,8 @@ class System(
                 f"**Python:** "
                 f"`{platform.python_version()}`\n"
                 f"**Platform:** "
-                f"`{platform.system()} {platform.release()}`\n"
+                f"`{platform.system()} "
+                f"{platform.release()}`\n"
                 f"**Architecture:** "
                 f"`{platform.machine()}`\n"
                 f"**Discord.py:** "
@@ -2277,13 +2057,20 @@ class System(
                 "Discord"
             ),
             value=(
-                f"**Latency:** `{latency}ms`\n"
-                f"**Guilds:** `{self.guild_count():,}`\n"
-                f"**Users:** `{self.user_count():,}`\n"
-                f"**Channels:** `{self.channel_count():,}`\n"
-                f"**Roles:** `{self.role_count():,}`\n"
-                f"**Emojis:** `{self.emoji_count():,}`\n"
-                f"**Threads:** `{self.thread_count():,}`"
+                f"**Latency:** "
+                f"`{round(self.bot.latency * 1000)}ms`\n"
+                f"**Guilds:** "
+                f"`{self.guild_count():,}`\n"
+                f"**Users:** "
+                f"`{self.user_count():,}`\n"
+                f"**Channels:** "
+                f"`{self.channel_count():,}`\n"
+                f"**Roles:** "
+                f"`{self.role_count():,}`\n"
+                f"**Emojis:** "
+                f"`{self.emoji_count():,}`\n"
+                f"**Threads:** "
+                f"`{self.thread_count():,}`"
             ),
             inline=False,
         )
@@ -2307,14 +2094,12 @@ class System(
                 f"{EMOJI['maintenance']} "
                 "Maintenance"
             ),
-            value=(
-                yes_no(
-                    bool(
-                        getattr(
-                            self.bot,
-                            "maintenance_mode",
-                            False,
-                        )
+            value=yes_no(
+                bool(
+                    getattr(
+                        self.bot,
+                        "maintenance_mode",
+                        False,
                     )
                 )
             ),
@@ -2328,106 +2113,76 @@ class System(
             ),
             value=(
                 f"**Health:** "
-                f"{status_badge(db_status.get('healthy'))}\n"
+                f"{status_badge("
+                    "status.get('healthy')"
+                ")}\n"
                 f"**Initialized:** "
-                f"{yes_no(bool(db_status.get('initialized')))}\n"
+                f"{yes_no("
+                    "bool("
+                    "status.get('initialized')"
+                    ")"
+                ")}\n"
                 f"**Keyspace:** "
-                f"`{db_status.get('keyspace', 'unknown')}`\n"
+                f"`{status.get('keyspace', 'unknown')}`\n"
                 f"**Prepared:** "
-                f"`{db_status.get('prepared_statements', 0):,}`"
+                f"`{status.get('prepared_statements', 0):,}`"
             ),
             inline=False,
         )
 
-        await interaction.edit_original_response(
-            embed=embed,
-            view=SystemDashboard(
+        await self.render(
+            interaction,
+            embed,
+            PanelView(
                 self,
                 interaction.user.id,
             ),
+            delay=DIAGNOSTICS_LOADING,
         )
-
-    # ========================================================
-    # LOGS
-    # ========================================================
 
     async def show_logs(
         self,
-        interaction: discord.Interaction,
-    ) -> None:
-
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            LOGS_LOADING
-        )
-
-        entries = MEMORY_HANDLER.recent(
-            limit=100
-        )
+        interaction,
+    ):
 
         view = LogView(
             self,
             interaction.user.id,
-            entries,
         )
 
-        await interaction.edit_original_response(
-            embed=view.build_embed(),
-            view=view,
+        await self.render(
+            interaction,
+            view.build_embed(),
+            view,
+            delay=LOGS_LOADING,
         )
-
-    # ========================================================
-    # CACHE
-    # ========================================================
 
     async def show_cache(
         self,
-        interaction: discord.Interaction,
-    ) -> None:
-
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            CACHE_LOADING
-        )
-
-        voice_clients = len(
-            getattr(
-                self.bot,
-                "voice_clients",
-                [],
-            )
-        )
-
-        commands_count = len(
-            self.bot.tree.get_commands()
-        )
+        interaction,
+    ):
 
         embed = EmbedFactory.base(
-            title=(
+            (
                 f"{EMOJI['cache']} "
                 "Runtime Cache"
             ),
-            description=(
-                "Current in-memory Discord state."
-            ),
+            "Current in-memory Discord state.",
         )
 
         embed.add_field(
             name="Guild Cache",
             value=(
-                f"**Guilds:** `{self.guild_count():,}`\n"
-                f"**Users:** `{self.user_count():,}`\n"
-                f"**Channels:** `{self.channel_count():,}`\n"
-                f"**Roles:** `{self.role_count():,}`\n"
-                f"**Emojis:** `{self.emoji_count():,}`"
+                f"**Guilds:** "
+                f"`{self.guild_count():,}`\n"
+                f"**Users:** "
+                f"`{self.user_count():,}`\n"
+                f"**Channels:** "
+                f"`{self.channel_count():,}`\n"
+                f"**Roles:** "
+                f"`{self.role_count():,}`\n"
+                f"**Emojis:** "
+                f"`{self.emoji_count():,}`"
             ),
             inline=False,
         )
@@ -2435,9 +2190,18 @@ class System(
         embed.add_field(
             name="Extended Cache",
             value=(
-                f"**Threads:** `{self.thread_count():,}`\n"
-                f"**Voice Clients:** `{voice_clients:,}`\n"
-                f"**Slash Commands:** `{commands_count:,}`"
+                f"**Threads:** "
+                f"`{self.thread_count():,}`\n"
+                f"**Voice Clients:** "
+                f"`{len("
+                    "getattr("
+                    "self.bot, "
+                    "'voice_clients', "
+                    "[]"
+                    ")"
+                ):,}`\n"
+                f"**Slash Commands:** "
+                f"`{len(self.bot.tree.get_commands()):,}`"
             ),
             inline=False,
         )
@@ -2446,45 +2210,31 @@ class System(
             name="Diagnostic Cache",
             value=(
                 f"**Stored Logs:** "
-                f"`{len(MEMORY_HANDLER.entries):,}` / "
-                f"`{MAX_LOG_ENTRIES}`\n"
+                f"`{len(MEMORY_HANDLER.entries):,}` "
+                f"/ `{MAX_LOG_ENTRIES}`\n"
                 f"**Runtime Start:** "
                 f"{fmt_dt(self.started_at)}"
             ),
             inline=False,
         )
 
-        await interaction.edit_original_response(
-            embed=embed,
-            view=SystemDashboard(
+        await self.render(
+            interaction,
+            embed,
+            PanelView(
                 self,
                 interaction.user.id,
             ),
+            delay=DATABASE_LOADING,
         )
-
-    # ========================================================
-    # DATABASE
-    # ========================================================
 
     async def show_database(
         self,
-        interaction: discord.Interaction,
-    ) -> None:
-
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            DATABASE_LOADING
-        )
+        interaction,
+    ):
 
         try:
-
-            status = (
-                await db.status()
-            )
+            status = await db.status()
 
         except Exception as exc:
 
@@ -2492,19 +2242,21 @@ class System(
                 "Database diagnostics failed"
             )
 
-            await interaction.edit_original_response(
-                embed=EmbedFactory.error(
+            await self.render(
+                interaction,
+                EmbedFactory.error(
                     "Database Diagnostics Failed",
                     (
-                        f"```text\n"
+                        "```text\n"
                         f"{truncate(exc, 1500)}"
-                        f"\n```"
+                        "\n```"
                     ),
                 ),
-                view=SystemDashboard(
+                PanelView(
                     self,
                     interaction.user.id,
                 ),
+                delay=DATABASE_LOADING,
             )
 
             return
@@ -2517,15 +2269,12 @@ class System(
         )
 
         embed = EmbedFactory.base(
-            title=(
+            (
                 f"{EMOJI['db']} "
                 "ScyllaDB Diagnostics"
             ),
-            description=(
-                f"Health: "
-                f"{status_badge(healthy)}"
-            ),
-            color=(
+            f"Health: {status_badge(healthy)}",
+            (
                 discord.Colour.green()
                 if healthy
                 else discord.Colour.red()
@@ -2558,24 +2307,26 @@ class System(
             inline=False,
         )
 
-        repositories = status.get(
+        repos = status.get(
             "repositories",
             [],
         )
 
         repo_text = (
             "\n".join(
-                f"{EMOJI['approved']} `{repo}`"
-                for repo in repositories
+                f"{EMOJI['approved']} "
+                f"`{repo}`"
+                for repo in repos
             )
-            if repositories
-            else "No repositories bound."
+            if repos
+            else
+            "No repositories bound."
         )
 
         embed.add_field(
             name=(
                 f"Repositories "
-                f"`{len(repositories)}`"
+                f"`{len(repos)}`"
             ),
             value=truncate(
                 repo_text,
@@ -2590,44 +2341,37 @@ class System(
                 f"**Prepared Statements:** "
                 f"`{status.get('prepared_statements', 0):,}`\n"
                 f"**Session:** "
-                f"{status_badge(status.get('session_connected'))}\n"
+                f"{status_badge("
+                    "status.get('session_connected')"
+                ")}\n"
                 f"**Cluster:** "
-                f"{status_badge(status.get('cluster_connected'))}"
+                f"{status_badge("
+                    "status.get('cluster_connected')"
+                ")}"
             ),
             inline=False,
         )
 
-        await interaction.edit_original_response(
-            embed=embed,
-            view=SystemDashboard(
+        await self.render(
+            interaction,
+            embed,
+            PanelView(
                 self,
                 interaction.user.id,
             ),
+            delay=DATABASE_LOADING,
         )
-
-    # ========================================================
-    # GATEWAY
-    # ========================================================
 
     async def show_gateway(
         self,
-        interaction: discord.Interaction,
-    ) -> None:
-
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            GATEWAY_LOADING
-        )
+        interaction,
+    ):
 
         embed = EmbedFactory.base(
-            title=(
+            (
                 f"{EMOJI['gateway']} "
                 "Gateway / Shard Console"
-            ),
+            )
         )
 
         shards = getattr(
@@ -2646,7 +2390,7 @@ class System(
             embed.add_field(
                 name="Gateway",
                 value=(
-                    f"**Mode:** `Single Shard`\n"
+                    "**Mode:** `Single Shard`\n"
                     f"**Latency:** "
                     f"`{round(self.bot.latency * 1000)}ms`\n"
                     f"**Guilds:** "
@@ -2662,8 +2406,7 @@ class System(
             )
 
             for shard_id, shard in sorted(
-                shards.items(),
-                key=lambda item: item[0],
+                shards.items()
             ):
 
                 latency = getattr(
@@ -2672,11 +2415,11 @@ class System(
                     0,
                 )
 
-                guilds = [
-                    guild
+                count = sum(
+                    1
                     for guild in self.bot.guilds
                     if guild.shard_id == shard_id
-                ]
+                )
 
                 embed.add_field(
                     name=f"Shard {shard_id}",
@@ -2684,7 +2427,7 @@ class System(
                         f"**Latency:** "
                         f"`{round(latency * 1000)}ms`\n"
                         f"**Guilds:** "
-                        f"`{len(guilds):,}`"
+                        f"`{count:,}`"
                     ),
                     inline=True,
                 )
@@ -2695,36 +2438,27 @@ class System(
                 f"**Bot User:** "
                 f"`{self.bot.user.id if self.bot.user else 'unknown'}`\n"
                 f"**Session:** "
-                f"{status_badge(self.bot.is_ready())}"
+                f"{status_badge("
+                    "self.bot.is_ready()"
+                ")}"
             ),
             inline=False,
         )
 
-        await interaction.edit_original_response(
-            embed=embed,
-            view=SystemDashboard(
+        await self.render(
+            interaction,
+            embed,
+            PanelView(
                 self,
                 interaction.user.id,
             ),
+            delay=GATEWAY_LOADING,
         )
-
-    # ========================================================
-    # SYSTEM INFO
-    # ========================================================
 
     async def show_system(
         self,
-        interaction: discord.Interaction,
-    ) -> None:
-
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            SYSTEM_LOADING
-        )
+        interaction,
+    ):
 
         uptime = (
             utcnow()
@@ -2732,10 +2466,10 @@ class System(
         ).total_seconds()
 
         embed = EmbedFactory.base(
-            title=(
+            (
                 f"{EMOJI['system']} "
                 "Host Diagnostics"
-            ),
+            )
         )
 
         embed.add_field(
@@ -2754,11 +2488,19 @@ class System(
         embed.add_field(
             name="Host",
             value=(
-                f"**OS:** `{platform.system()}`\n"
-                f"**Release:** `{platform.release()}`\n"
-                f"**Machine:** `{platform.machine()}`\n"
+                f"**OS:** "
+                f"`{platform.system()}`\n"
+                f"**Release:** "
+                f"`{platform.release()}`\n"
+                f"**Machine:** "
+                f"`{platform.machine()}`\n"
                 f"**Processor:** "
-                f"`{truncate(platform.processor() or 'Unknown', 120)}`"
+                f"`{truncate("
+                    "platform.processor() "
+                    "or "
+                    "'Unknown'"
+                    ", 120"
+                )}`"
             ),
             inline=False,
         )
@@ -2798,39 +2540,26 @@ class System(
             inline=True,
         )
 
-        await interaction.edit_original_response(
-            embed=embed,
-            view=SystemDashboard(
+        await self.render(
+            interaction,
+            embed,
+            PanelView(
                 self,
                 interaction.user.id,
             ),
+            delay=SYSTEM_LOADING,
         )
-
-    # ========================================================
-    # HEALTH
-    # ========================================================
 
     async def show_health(
         self,
-        interaction: discord.Interaction,
-    ) -> None:
-
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            HEALTH_LOADING
-        )
+        interaction,
+    ):
 
         started = time.perf_counter()
-
-        database_ok = False
+        db_ok = False
 
         try:
-
-            database_ok = await db.ping()
+            db_ok = await db.ping()
 
         except Exception:
 
@@ -2844,24 +2573,23 @@ class System(
         ) * 1000
 
         discord_ok = self.bot.is_ready()
-
-        overall_ok = (
+        overall = (
             discord_ok
-            and database_ok
+            and db_ok
         )
 
         embed = EmbedFactory.base(
-            title=(
+            (
                 f"{EMOJI['health']} "
                 "Lunar Health Check"
             ),
-            description=(
+            (
                 f"Overall: "
-                f"{status_badge(overall_ok)}"
+                f"{status_badge(overall)}"
             ),
-            color=(
+            (
                 discord.Colour.green()
-                if overall_ok
+                if overall
                 else discord.Colour.red()
             ),
         )
@@ -2878,10 +2606,8 @@ class System(
 
         embed.add_field(
             name="ScyllaDB",
-            value=(
-                status_badge(
-                    database_ok
-                )
+            value=status_badge(
+                db_ok
             ),
             inline=True,
         )
@@ -2895,46 +2621,39 @@ class System(
             inline=False,
         )
 
-        await interaction.edit_original_response(
-            embed=embed,
-            view=SystemDashboard(
+        await self.render(
+            interaction,
+            embed,
+            PanelView(
                 self,
                 interaction.user.id,
             ),
+            delay=HEALTH_LOADING,
         )
-
-    # ========================================================
-    # COMMAND STATS
-    # ========================================================
 
     async def show_command_stats(
         self,
-        interaction: discord.Interaction,
-    ) -> None:
-
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            COMMAND_STATS_LOADING
-        )
+        interaction,
+    ):
 
         if db.command_stats is None:
 
-            await interaction.edit_original_response(
-                embed=EmbedFactory.error(
-                    "Command Statistics Unavailable",
-                    (
-                        "The command statistics repository "
-                        "is not currently bound."
-                    ),
+            embed = EmbedFactory.error(
+                "Command Statistics Unavailable",
+                (
+                    "The command statistics repository "
+                    "is not currently bound."
                 ),
-                view=SystemDashboard(
+            )
+
+            await self.render(
+                interaction,
+                embed,
+                PanelView(
                     self,
                     interaction.user.id,
                 ),
+                delay=COMMAND_STATS_LOADING,
             )
 
             return
@@ -2955,73 +2674,58 @@ class System(
                 "Command statistics lookup failed"
             )
 
-            await interaction.edit_original_response(
-                embed=EmbedFactory.error(
+            await self.render(
+                interaction,
+                EmbedFactory.error(
                     "Statistics Lookup Failed",
                     (
-                        f"```text\n"
+                        "```text\n"
                         f"{truncate(exc, 1200)}"
-                        f"\n```"
+                        "\n```"
                     ),
                 ),
-                view=SystemDashboard(
+                PanelView(
                     self,
                     interaction.user.id,
                 ),
+                delay=COMMAND_STATS_LOADING,
             )
 
             return
 
         embed = EmbedFactory.base(
-            title=(
+            (
                 f"{EMOJI['commands']} "
                 "Command Analytics"
             ),
-            description=(
+            (
                 f"**Total recorded invocations:** "
                 f"`{total:,}`"
             ),
         )
 
-        if not rows:
+        if rows:
 
-            embed.add_field(
-                name="Usage",
-                value=(
-                    "No command usage has been recorded yet."
-                ),
-                inline=False,
-            )
-
-        else:
-
-            lines: list[str] = []
-
-            for index, row in enumerate(
-                rows[:15],
-                start=1,
-            ):
-
-                command_name = getattr(
-                    row,
-                    "command_name",
-                    "unknown",
+            lines = [
+                (
+                    f"`{n:>2}.` "
+                    f"`/{getattr(row, 'command_name', 'unknown')}` "
+                    f"— **{int("
+                        "getattr("
+                        "row, "
+                        "'uses', "
+                        "0"
+                        ")"
+                        " or "
+                        "0"
+                    ):,}**"
                 )
-
-                uses = int(
-                    getattr(
-                        row,
-                        "uses",
-                        0,
-                    )
-                    or 0
+                for n, row
+                in enumerate(
+                    rows[:15],
+                    1,
                 )
-
-                lines.append(
-                    f"`{index:>2}.` "
-                    f"`/{command_name}` "
-                    f"— **{uses:,}**"
-                )
+            ]
 
             embed.add_field(
                 name="Top Commands",
@@ -3029,9 +2733,22 @@ class System(
                 inline=False,
             )
 
+        else:
+
+            embed.add_field(
+                name="Usage",
+                value=(
+                    "No command usage has "
+                    "been recorded yet."
+                ),
+                inline=False,
+            )
+
         embed.add_field(
             name="Tracked Commands",
-            value=f"`{len(rows):,}`",
+            value=(
+                f"`{len(rows):,}`"
+            ),
             inline=True,
         )
 
@@ -3041,49 +2758,41 @@ class System(
             inline=True,
         )
 
-        await interaction.edit_original_response(
-            embed=embed,
-            view=SystemDashboard(
+        await self.render(
+            interaction,
+            embed,
+            PanelView(
                 self,
                 interaction.user.id,
             ),
+            delay=COMMAND_STATS_LOADING,
         )
-
-    # ========================================================
-    # SECURITY
-    # ========================================================
 
     async def show_security(
         self,
-        interaction: discord.Interaction,
-    ) -> None:
-
-        await interaction.response.defer(
-            ephemeral=True,
-            thinking=True,
-        )
-
-        await asyncio.sleep(
-            SECURITY_LOADING
-        )
+        interaction,
+    ):
 
         embed = EmbedFactory.base(
-            title=(
+            (
                 f"{EMOJI['security']} "
                 "Lunar Security Console"
             ),
-            description=(
-                "Current owner and runtime security information."
+            (
+                "Current owner and runtime "
+                "security information."
             ),
         )
 
         embed.add_field(
             name="Authorized Owners",
             value="\n".join(
-                f"{EMOJI['approved']} "
-                f"<@{owner_id}> "
-                f"`{owner_id}`"
-                for owner_id in OWNERS
+                (
+                    f"{EMOJI['approved']} "
+                    f"<@{owner}> "
+                    f"`{owner}`"
+                )
+                for owner in OWNERS
             ),
             inline=False,
         )
@@ -3091,9 +2800,12 @@ class System(
         embed.add_field(
             name="Dashboard",
             value=(
-                f"{EMOJI['approved']} Owner restricted\n"
-                f"{EMOJI['approved']} Ephemeral interface\n"
-                f"{EMOJI['approved']} Per-view executor validation"
+                f"{EMOJI['approved']} "
+                "Owner restricted\n"
+                f"{EMOJI['approved']} "
+                "Ephemeral interface\n"
+                f"{EMOJI['approved']} "
+                "Per-view owner validation"
             ),
             inline=False,
         )
@@ -3101,29 +2813,30 @@ class System(
         embed.add_field(
             name="Developer Console",
             value=(
-                f"{EMOJI['approved']} Owner restricted\n"
-                f"{EMOJI['approved']} Built-in namespace only\n"
-                f"{EMOJI['approved']} Builtins disabled"
+                f"{EMOJI['approved']} "
+                "Owner restricted\n"
+                f"{EMOJI['approved']} "
+                "Built-in namespace only\n"
+                f"{EMOJI['approved']} "
+                "Builtins disabled"
             ),
             inline=False,
         )
 
-        await interaction.edit_original_response(
-            embed=embed,
-            view=SystemDashboard(
+        await self.render(
+            interaction,
+            embed,
+            PanelView(
                 self,
                 interaction.user.id,
             ),
+            delay=SECURITY_LOADING,
         )
-
-    # ========================================================
-    # MAINTENANCE
-    # ========================================================
 
     async def open_maintenance(
         self,
-        interaction: discord.Interaction,
-    ) -> None:
+        interaction,
+    ):
 
         enabled = bool(
             getattr(
@@ -3135,28 +2848,13 @@ class System(
 
         if enabled:
 
-            await interaction.response.send_message(
-                f"{EMOJI['loading']} "
-                "Disabling maintenance mode...",
-                ephemeral=True,
-            )
-
-            await asyncio.sleep(
-                MAINTENANCE_LOADING
-            )
-
-            if db.variables is None:
-
-                await interaction.edit_original_response(
-                    content=(
-                        f"{EMOJI['error']} "
-                        "The maintenance repository is unavailable."
-                    )
-                )
-
-                return
-
             try:
+
+                if db.variables is None:
+                    raise RuntimeError(
+                        "The maintenance repository "
+                        "is unavailable."
+                    )
 
                 await db.variables.set_maintenance(
                     False,
@@ -3172,15 +2870,19 @@ class System(
                     if db.audit is not None:
 
                         await db.audit.record(
-                            interaction.guild.id
-                            if interaction.guild
-                            else 0,
+                            (
+                                interaction.guild.id
+                                if interaction.guild
+                                else 0
+                            ),
                             actor_id=interaction.user.id,
                             action="maintenance_disable",
                             target_id=None,
-                            reason="Maintenance mode disabled.",
+                            reason=(
+                                "Maintenance mode disabled."
+                            ),
                             metadata={
-                                "source": "system.py",
+                                "source": "system.py"
                             },
                         )
 
@@ -3190,15 +2892,13 @@ class System(
                         "Failed to audit maintenance disable"
                     )
 
-                await interaction.edit_original_response(
-                    content=(
-                        f"{EMOJI['approved']} "
-                        "**Maintenance Disabled**\n\n"
-                        "Normal command processing may resume."
-                    )
+                embed = EmbedFactory.success(
+                    "Maintenance Disabled",
+                    (
+                        "Normal command processing "
+                        "may resume."
+                    ),
                 )
-
-                return
 
             except Exception as exc:
 
@@ -3206,50 +2906,157 @@ class System(
                     "Failed to disable maintenance"
                 )
 
-                await interaction.edit_original_response(
-                    content=(
-                        f"{EMOJI['error']} "
-                        "Failed to disable maintenance.\n\n"
-                        f"```text\n"
+                embed = EmbedFactory.error(
+                    "Maintenance Failed",
+                    (
+                        "```text\n"
                         f"{truncate(exc, 1200)}"
-                        f"\n```"
-                    )
+                        "\n```"
+                    ),
                 )
 
-                return
-
-        await interaction.response.send_modal(
-            MaintenanceModal(
-                self,
-                interaction.user.id,
+            await self.render(
+                interaction,
+                embed,
+                SystemMaintenanceView(
+                    self,
+                    interaction.user.id,
+                ),
+                delay=MAINTENANCE_LOADING,
             )
+
+            return
+
+        reason = (
+            getattr(
+                self.bot,
+                "maintenance_reason",
+                "",
+            )
+            or
+            "No reason configured."
         )
 
-    # ========================================================
-    # EVAL HELP
-    # ========================================================
+        embed = EmbedFactory.warning(
+            "Maintenance Control",
+            (
+                f"**Current State:** "
+                f"{EMOJI['approved']} `NORMAL`\n\n"
+                f"**Current Reason:**\n"
+                f"> {truncate(reason, 700)}\n\n"
+                "Enabling maintenance will persist "
+                "the state to ScyllaDB."
+            ),
+        )
+
+        await self.render(
+            interaction,
+            embed,
+            SystemMaintenanceView(
+                self,
+                interaction.user.id,
+            ),
+        )
+
+    async def enable_maintenance(
+        self,
+        interaction,
+        reason: str,
+    ):
+
+        try:
+
+            if db.variables is None:
+                raise RuntimeError(
+                    "The maintenance repository "
+                    "is unavailable."
+                )
+
+            await db.variables.set_maintenance(
+                True,
+                reason=reason,
+                changed_by=interaction.user.id,
+            )
+
+            self.bot.maintenance_mode = True
+            self.bot.maintenance_reason = reason
+
+            try:
+
+                if db.audit is not None:
+
+                    await db.audit.record(
+                        (
+                            interaction.guild.id
+                            if interaction.guild
+                            else 0
+                        ),
+                        actor_id=interaction.user.id,
+                        action="maintenance_enable",
+                        target_id=None,
+                        reason=reason,
+                        metadata={
+                            "source": "system.py"
+                        },
+                    )
+
+            except Exception:
+
+                logger.exception(
+                    "Failed to audit maintenance enable"
+                )
+
+            embed = EmbedFactory.success(
+                "Maintenance Enabled",
+                (
+                    "Lunar maintenance mode is now active.\n\n"
+                    f"**Reason:**\n"
+                    f"> {truncate(reason, 700)}\n\n"
+                    f"{EMOJI['security']} "
+                    "The state has been persisted to ScyllaDB."
+                ),
+            )
+
+        except Exception as exc:
+
+            logger.exception(
+                "Failed to enable maintenance"
+            )
+
+            embed = EmbedFactory.error(
+                "Maintenance Failed",
+                (
+                    "```text\n"
+                    f"{truncate(exc, 1200)}"
+                    "\n```"
+                ),
+            )
+
+        await self.render(
+            interaction,
+            embed,
+            SystemMaintenanceView(
+                self,
+                interaction.user.id,
+            ),
+            delay=MAINTENANCE_LOADING,
+        )
 
     async def show_eval_help(
         self,
-        interaction: discord.Interaction,
-    ) -> None:
+        interaction,
+    ):
 
         view = EvalHelpView(
-            interaction.user.id
+            self,
+            interaction.user.id,
         )
 
-        # Attach cog to the navigation helper.
-        view.cog = self
-
-        await interaction.response.send_message(
-            embed=view.build_embed(),
-            view=view,
-            ephemeral=True,
+        await self.render(
+            interaction,
+            view.build_embed(),
+            view,
         )
-
-    # ========================================================
-    # PREFIX EVAL
-    # ========================================================
 
     @commands.command(
         name="eval",
@@ -3260,14 +3067,16 @@ class System(
         ctx: commands.Context,
         *,
         code: Optional[str] = None,
-    ) -> None:
+    ):
 
         if ctx.author.id not in OWNERS:
 
             await ctx.reply(
-                f"{EMOJI['denied']} "
-                "You do not have permission "
-                "to use this command."
+                (
+                    f"{EMOJI['denied']} "
+                    "You do not have permission "
+                    "to use this command."
+                )
             )
 
             return
@@ -3275,10 +3084,9 @@ class System(
         if not code:
 
             view = EvalHelpView(
-                ctx.author.id
+                self,
+                ctx.author.id,
             )
-
-            view.cog = self
 
             await ctx.reply(
                 embed=view.build_embed(),
@@ -3289,69 +3097,49 @@ class System(
 
         code = code.strip()
 
-        if code.startswith("```"):
+        if code.startswith(
+            "```"
+        ):
 
-            lines = code.splitlines()
-
-            if lines:
-                lines = lines[1:]
+            lines = (
+                code.splitlines()[1:]
+            )
 
             if (
                 lines
                 and
-                lines[-1].strip() == "```"
+                lines[-1].strip()
+                == "```"
             ):
                 lines.pop()
 
-            code = "\n".join(lines)
+            code = "\n".join(
+                lines
+            )
+
+        env = {
+            "bot": self.bot,
+            "ctx": ctx,
+            "message": ctx.message,
+            "guild": ctx.guild,
+            "channel": ctx.channel,
+            "author": ctx.author,
+            "discord": discord,
+            "commands": commands,
+            "app_commands": app_commands,
+            "EMOJI": EMOJI,
+            "db": db,
+        }
 
         try:
-
-            environment = {
-                "bot": self.bot,
-                "ctx": ctx,
-                "message": ctx.message,
-                "guild": ctx.guild,
-                "channel": ctx.channel,
-                "author": ctx.author,
-                "discord": discord,
-                "commands": commands,
-                "app_commands": app_commands,
-                "EMOJI": EMOJI,
-                "db": db,
-            }
 
             result = eval(
                 code,
                 {
-                    "__builtins__": {},
+                    "__builtins__": {}
                 },
-                environment,
+                env,
             )
-
-            if result is None:
-
-                result_text = "None"
-
-            elif isinstance(
-                result,
-                str,
-            ):
-
-                result_text = result
-
-            else:
-
-                result_text = repr(
-                    result
-                )
-
-            if len(result_text) > 3900:
-
-                result_text = (
-                    result_text[:3900]
-                    + "\n..."
-                )
 
             embed = EmbedFactory.success(
                 "Eval Result",
@@ -3365,45 +3153,43 @@ class System(
                 ),
                 value=(
                     "```py\n"
-                    f"{result_text}"
+                    f"{truncate("
+                        "'None'"
+                        " if "
+                        "result is None"
+                        " else "
+                        "repr(result)"
+                        ", "
+                        "3900"
+                    )}"
                     "\n```"
                 ),
                 inline=False,
             )
 
-            await ctx.reply(
-                embed=embed
+        except Exception as exc:
+
+            embed = EmbedFactory.error(
+                "Eval Error",
+                (
+                    "```py\n"
+                    f"{truncate("
+                        "type(exc).__name__"
+                        " + "
+                        "': '"
+                        " + "
+                        "str(exc)"
+                        ", "
+                        "3900"
+                    )}"
+                    "\n```"
+                ),
             )
 
-        except Exception as error:
+        await ctx.reply(
+            embed=embed
+        )
 
-            error_text = (
-                f"{type(error).__name__}: "
-                f"{error}"
-            )
-
-            if len(error_text) > 3900:
-
-                error_text = (
-                    error_text[:3900]
-                    + "\n..."
-                )
-
-            await ctx.reply(
-                embed=EmbedFactory.error(
-                    "Eval Error",
-                    (
-                        "```py\n"
-                        f"{error_text}"
-                        "\n```"
-                    ),
-                )
-            )
-
-
-# ============================================================
-# SETUP
-# ============================================================
 
 async def setup(
     bot: commands.Bot,

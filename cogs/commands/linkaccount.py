@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
 from typing import Optional
 
 import aiohttp
@@ -14,6 +15,7 @@ from discord.ext import commands
 from cogs.utilities.database import db
 from cogs.utilities.emoji import EMOJI
 from cogs.utilities.generatecode import GenerateCode
+
 
 log = logging.getLogger("lunar.link")
 
@@ -34,6 +36,7 @@ LUNAR_NOTIFICATION_ENDPOINT = (
 
 LINK_GUILD_ID = 1330574273760465029
 VERIFIED_ROLE_ID = 1403390546164187217
+GACHA_PING_ROLE_ID = 1546541775685161070
 
 LUNAR_BYPASS_TOKEN = os.getenv(
     "LUNAR_BYPASS_TOKEN"
@@ -156,6 +159,17 @@ def get_profile_roles(
     }
 
 
+def secrets_compare(
+    expected: str,
+    supplied: str,
+) -> bool:
+
+    return secrets.compare_digest(
+        expected,
+        supplied,
+    )
+
+
 # ============================================================
 # USERNAME MODAL
 # ============================================================
@@ -276,7 +290,7 @@ class VerificationView(
         self,
         interaction: discord.Interaction,
         button: discord.ui.Button,
-    ):
+    ) -> None:
 
         await interaction.response.send_modal(
             LinkCodeModal(
@@ -293,7 +307,7 @@ class VerificationView(
         self,
         interaction: discord.Interaction,
         button: discord.ui.Button,
-    ):
+    ) -> None:
 
         embed = make_embed(
             f"{EMOJI['denied']} Linking Cancelled",
@@ -319,6 +333,84 @@ class VerificationView(
 
 
 # ============================================================
+# GACHA PING VIEW
+# ============================================================
+
+class GachaPingView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        cog: "LinkAccount",
+        user_id: int,
+        username: str,
+        *,
+        enabled: bool = False,
+    ):
+
+        super().__init__(
+            timeout=600
+        )
+
+        self.cog = cog
+        self.user_id = user_id
+        self.username = username
+        self.enabled = enabled
+
+        self.gacha_ping.label = (
+            "Disable Gacha Pings"
+            if enabled
+            else "Enable Gacha Pings"
+        )
+
+        self.gacha_ping.style = (
+            discord.ButtonStyle.danger
+            if enabled
+            else discord.ButtonStyle.primary
+        )
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction,
+    ) -> bool:
+
+        if interaction.user.id != self.user_id:
+
+            await interaction.response.send_message(
+                "This Lunar account panel belongs to another user.",
+                ephemeral=True,
+            )
+
+            return False
+
+        return True
+
+    @discord.ui.button(
+        label="Enable Gacha Pings",
+        style=discord.ButtonStyle.primary,
+        emoji="🎲",
+    )
+    async def gacha_ping(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+
+        await self.cog.toggle_gacha_ping(
+            interaction,
+            self.username,
+        )
+
+    async def on_timeout(
+        self,
+    ) -> None:
+
+        for item in self.children:
+            item.disabled = True
+
+
+# ============================================================
 # ROLE SYNC VIEW
 # ============================================================
 
@@ -329,13 +421,33 @@ class RoleSyncView(
     def __init__(
         self,
         cog: "LinkAccount",
+        user_id: int,
+        username: str,
     ):
 
         super().__init__(
-            timeout=300
+            timeout=600
         )
 
         self.cog = cog
+        self.user_id = user_id
+        self.username = username
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction,
+    ) -> bool:
+
+        if interaction.user.id != self.user_id:
+
+            await interaction.response.send_message(
+                "This Lunar account panel belongs to another user.",
+                ephemeral=True,
+            )
+
+            return False
+
+        return True
 
     @discord.ui.button(
         label="Sync My Roles",
@@ -346,7 +458,7 @@ class RoleSyncView(
         self,
         interaction: discord.Interaction,
         button: discord.ui.Button,
-    ):
+    ) -> None:
 
         await self.cog.sync_roles(
             interaction
@@ -361,18 +473,20 @@ class RoleSyncView(
         self,
         interaction: discord.Interaction,
         button: discord.ui.Button,
-    ):
+    ) -> None:
 
         embed = make_embed(
             f"{EMOJI['approved']} Account Linked",
             (
                 f"{EMOJI['lunar']} **Lunar Account**\n"
-                "> Your Lunar Anime account is linked successfully.\n\n"
+                f"> `{self.username}`\n\n"
                 f"{EMOJI['approved']} **Verification**\n"
-                "> Your account has been verified.\n\n"
+                "> Your Lunar Anime account is linked "
+                "and verified successfully.\n\n"
                 "⏭️ **Role Sync**\n"
                 "> Skipped for now.\n\n"
-                "You can synchronize your Lunar roles later."
+                "🎲 **Gacha Pings**\n"
+                "> Would you like to receive Lunar gacha notifications?"
             ),
             color=discord.Color.green(),
         )
@@ -384,7 +498,12 @@ class RoleSyncView(
         await interaction.response.edit_message(
             content=None,
             embed=embed,
-            view=None,
+            view=GachaPingView(
+                self.cog,
+                self.user_id,
+                self.username,
+                enabled=False,
+            ),
         )
 
     async def on_timeout(
@@ -490,6 +609,7 @@ class LinkAccount(
         headers = {}
 
         if LUNAR_BYPASS_TOKEN:
+
             headers[
                 "X-Scraper-Guard-Bypass"
             ] = LUNAR_BYPASS_TOKEN
@@ -566,11 +686,13 @@ class LinkAccount(
         }
 
         if LUNAR_BYPASS_TOKEN:
+
             headers[
                 "X-Scraper-Guard-Bypass"
             ] = LUNAR_BYPASS_TOKEN
 
         if LUNAR_TOKEN:
+
             headers[
                 "Authorization"
             ] = LUNAR_TOKEN
@@ -818,8 +940,7 @@ class LinkAccount(
                 return
 
         # ----------------------------------------------------
-        # Check whether Lunar account is already linked
-        # elsewhere
+        # Check whether Lunar account is already linked elsewhere
         # ----------------------------------------------------
 
         await self.loading(
@@ -904,7 +1025,7 @@ class LinkAccount(
 
         try:
 
-            code = generate_code(
+            code = GenerateCode.generate_code(
                 interaction.user.name,
                 lunar_username,
             )
@@ -998,8 +1119,6 @@ class LinkAccount(
 
         if not notification_sent:
 
-            # Keep the pending link so a retry can use
-            # the stored code/request if necessary.
             await interaction.edit_original_response(
                 content=None,
                 embed=make_embed(
@@ -1240,6 +1359,11 @@ class LinkAccount(
 
             return
 
+        username = (
+            username
+            or "Unknown"
+        )
+
         # ----------------------------------------------------
         # Success
         # ----------------------------------------------------
@@ -1248,19 +1372,18 @@ class LinkAccount(
             f"{EMOJI['approved']} Account Verified",
             (
                 f"{EMOJI['lunar']} **Lunar Account**\n"
-                f"> `{username or 'Unknown'}`\n\n"
+                f"> `{username}`\n\n"
                 f"{EMOJI['verify']} **Verification Complete**\n"
                 "> Your Lunar Anime account is now linked "
                 "and verified with Discord.\n\n"
-                "Would you like to synchronize your "
-                "Lunar roles with Discord?"
+                "Choose an option below to continue."
             ),
             color=discord.Color.green(),
         )
 
         embed.add_field(
             name="Lunar",
-            value=f"`{username or 'Unknown'}`",
+            value=f"`{username}`",
             inline=True,
         )
 
@@ -1278,7 +1401,9 @@ class LinkAccount(
             content=None,
             embed=embed,
             view=RoleSyncView(
-                self
+                self,
+                interaction.user.id,
+                username,
             ),
         )
 
@@ -1310,11 +1435,14 @@ class LinkAccount(
             and now - last_sync < ROLE_SYNC_COOLDOWN
         ):
 
-            remaining = int(
-                ROLE_SYNC_COOLDOWN
-                - (
-                    now - last_sync
-                )
+            remaining = max(
+                1,
+                int(
+                    ROLE_SYNC_COOLDOWN
+                    - (
+                        now - last_sync
+                    )
+                ),
             )
 
             await interaction.response.send_message(
@@ -1332,9 +1460,11 @@ class LinkAccount(
             interaction.user.id
         ] = now
 
-        await interaction.response.defer(
-            ephemeral=True
-        )
+        # IMPORTANT:
+        # No ephemeral=True here.
+        # This allows edit_original_response() to keep editing
+        # the SAME message that contains the role-sync buttons.
+        await interaction.response.defer()
 
         try:
 
@@ -1355,7 +1485,10 @@ class LinkAccount(
                 interaction.user.id
             )
 
-            if not account or not account.verified:
+            if (
+                not account
+                or not account.verified
+            ):
 
                 await interaction.edit_original_response(
                     content=None,
@@ -1508,14 +1641,6 @@ class LinkAccount(
             removed: list[str] = []
             unchanged: list[str] = []
 
-            configured_role_ids = {
-                role_data["id"]
-                for role_data in (
-                    LUNAR_ROLE_MAP.values()
-                )
-            }
-
-            # Add / keep mapped roles.
             for role_name, role_data in (
                 LUNAR_ROLE_MAP.items()
             ):
@@ -1618,7 +1743,9 @@ class LinkAccount(
                     "➖ **Removed**\n"
                     f"{removed_text}\n\n"
                     "✅ **Already Correct**\n"
-                    f"{unchanged_text}"
+                    f"{unchanged_text}\n\n"
+                    "🎲 **Gacha Pings**\n"
+                    "> Would you like to receive Lunar gacha notifications?"
                 ),
                 color=discord.Color.green(),
             )
@@ -1649,10 +1776,16 @@ class LinkAccount(
                 url=interaction.user.display_avatar.url
             )
 
+            # SAME MESSAGE
             await interaction.edit_original_response(
                 content=None,
                 embed=embed,
-                view=None,
+                view=GachaPingView(
+                    self,
+                    interaction.user.id,
+                    username,
+                    enabled=False,
+                ),
             )
 
             log.info(
@@ -1729,22 +1862,197 @@ class LinkAccount(
                 view=None,
             )
 
+    # ========================================================
+    # GACHA PING
+    # ========================================================
 
-# ============================================================
-# CONSTANT-TIME STRING COMPARISON
-# ============================================================
+    async def toggle_gacha_ping(
+        self,
+        interaction: discord.Interaction,
+        username: str,
+    ) -> None:
 
-def secrets_compare(
-    expected: str,
-    supplied: str,
-) -> bool:
+        guild = self.bot.get_guild(
+            LINK_GUILD_ID
+        )
 
-    import secrets
+        if guild is None:
 
-    return secrets.compare_digest(
-        expected,
-        supplied,
-    )
+            await interaction.response.edit_message(
+                content=None,
+                embed=make_embed(
+                    f"{EMOJI['error']} Guild Unavailable",
+                    (
+                        "I couldn't access the Lunar Discord server."
+                    ),
+                    color=discord.Color.red(),
+                ),
+                view=None,
+            )
+
+            return
+
+        member = guild.get_member(
+            interaction.user.id
+        )
+
+        if member is None:
+
+            try:
+
+                member = await guild.fetch_member(
+                    interaction.user.id
+                )
+
+            except discord.NotFound:
+
+                await interaction.response.edit_message(
+                    content=None,
+                    embed=make_embed(
+                        f"{EMOJI['error']} Member Not Found",
+                        (
+                            "I couldn't find your Discord "
+                            "member profile in the Lunar server."
+                        ),
+                        color=discord.Color.red(),
+                    ),
+                    view=None,
+                )
+
+                return
+
+        role = guild.get_role(
+            GACHA_PING_ROLE_ID
+        )
+
+        if role is None:
+
+            await interaction.response.edit_message(
+                content=None,
+                embed=make_embed(
+                    f"{EMOJI['error']} Role Unavailable",
+                    (
+                        "The Lunar Gacha Ping role could not be found."
+                    ),
+                    color=discord.Color.red(),
+                ),
+                view=None,
+            )
+
+            return
+
+        try:
+
+            has_role = (
+                role
+                in member.roles
+            )
+
+            if has_role:
+
+                await member.remove_roles(
+                    role,
+                    reason="Lunar Gacha Ping preference",
+                )
+
+                enabled = False
+
+                status = (
+                    "🎲 **Gacha Pings Disabled**\n"
+                    "> You will no longer receive Lunar "
+                    "gacha notifications."
+                )
+
+            else:
+
+                await member.add_roles(
+                    role,
+                    reason="Lunar Gacha Ping preference",
+                )
+
+                enabled = True
+
+                status = (
+                    "🎲 **Gacha Pings Enabled**\n"
+                    "> You will now receive Lunar "
+                    "gacha notifications."
+                )
+
+            embed = make_embed(
+                f"{EMOJI['approved']} Gacha Preference Updated",
+                (
+                    f"{EMOJI['lunar']} **Lunar Account**\n"
+                    f"> `{username}`\n\n"
+                    f"{status}"
+                ),
+                color=(
+                    discord.Color.green()
+                    if enabled
+                    else discord.Color.dark_grey()
+                ),
+            )
+
+            embed.set_thumbnail(
+                url=interaction.user.display_avatar.url
+            )
+
+            # SAME MESSAGE
+            await interaction.response.edit_message(
+                content=None,
+                embed=embed,
+                view=GachaPingView(
+                    self,
+                    interaction.user.id,
+                    username,
+                    enabled=enabled,
+                ),
+            )
+
+            log.info(
+                "Gacha ping role changed: Discord=%s Enabled=%s",
+                interaction.user.id,
+                enabled,
+            )
+
+        except discord.Forbidden:
+
+            log.exception(
+                "Discord permissions prevented Gacha Ping role update."
+            )
+
+            await interaction.response.edit_message(
+                content=None,
+                embed=make_embed(
+                    f"{EMOJI['error']} Permission Error",
+                    (
+                        "Discord prevented me from changing "
+                        "your Gacha Ping role.\n\n"
+                        "Make sure the bot's highest role is "
+                        "above the Gacha Ping role."
+                    ),
+                    color=discord.Color.red(),
+                ),
+                view=None,
+            )
+
+        except Exception:
+
+            log.exception(
+                "Unexpected Gacha Ping role update error."
+            )
+
+            await interaction.response.edit_message(
+                content=None,
+                embed=make_embed(
+                    f"{EMOJI['error']} Gacha Ping Failed",
+                    (
+                        "Something unexpected happened while "
+                        "updating your Gacha Ping preference."
+                    ),
+                    color=discord.Color.red(),
+                ),
+                view=None,
+            )
 
 
 # ============================================================
@@ -1753,7 +2061,7 @@ def secrets_compare(
 
 async def setup(
     bot: commands.Bot,
-):
+) -> None:
 
     await bot.add_cog(
         LinkAccount(bot)

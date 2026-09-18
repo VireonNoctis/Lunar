@@ -12,9 +12,9 @@ Credits
 
 Developers
 
-- Vireon Noctis — Martin Adolf Rahman
+- Vireon Noctis — The Slop King
 - Thanon C — Dei Evergreen
-
+- Real — real.dev.io
 ---
 
 Features

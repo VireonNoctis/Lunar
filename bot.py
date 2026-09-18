@@ -111,6 +111,7 @@ bot = commands.Bot(
     command_prefix="?",
     intents=intents,
     status=discord.Status.idle,
+)
 
 
 # Runtime maintenance state.

@@ -10,7 +10,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from utilities.database import db
+from cogs.utilities.database import db
 from cogs.utilities.emoji import EMOJI
 from cogs.utilities.randomizer import (
     CryptographicRandomizer,

@@ -307,72 +307,113 @@ class CryptographicRandomizer:
     # ========================================================
     # WINNER SELECTION
     # ========================================================
+@classmethod
+def select(
+    cls,
+    *,
+    seed: bytes,
+    giveaway_id: str,
+    guild_id: str,
+    message_id: str,
+    participants: Sequence[str],
+    winner_count: int,
+    round_number: int = 1,
+) -> RandomSelection:
+    """
+    Select unique winners without replacement.
+    """
 
-    @classmethod
-    def select(
-        cls,
-        *,
-        seed: bytes,
-        giveaway_id: str,
-        guild_id: str,
-        message_id: str,
-        participants: Sequence[str],
-        winner_count: int,
-        round_number: int = 1,
-    ) -> RandomSelection:
-        """
-        Select unique winners without replacement.
-        """
+    normalized = sorted(
+        {
+            str(user_id).strip()
+            for user_id in participants
+            if str(user_id).strip()
+        }
+    )
 
-        normalized = sorted(
-            {
-                str(user_id).strip()
-                for user_id in participants
-                if str(user_id).strip()
-            }
+    if not normalized:
+        raise ValueError(
+            "Cannot select winners from an empty participant set."
         )
 
-        if not normalized:
-            raise ValueError(
-                "Cannot select winners from an empty participant set."
-            )
-
-        if winner_count <= 0:
-            raise ValueError(
-                "winner_count must be greater than zero."
-            )
-
-        if winner_count > len(
-            normalized
-        ):
-            raise ValueError(
-                "winner_count cannot exceed participant count."
-            )
-
-        if round_number <= 0:
-            raise ValueError(
-                "round_number must be greater than zero."
-            )
-
-        context = cls.canonicalize(
-            giveaway_id=giveaway_id,
-            guild_id=guild_id,
-            message_id=message_id,
-            participants=normalized,
-            winner_count=winner_count,
-            round_number=round_number,
+    if winner_count <= 0:
+        raise ValueError(
+            "winner_count must be greater than zero."
         )
 
-        key = cls.derive_key(
-            seed,
-            context,
+    if winner_count > len(normalized):
+        raise ValueError(
+            "winner_count cannot exceed participant count."
         )
 
-        pool = list(
-            normalized
+    if round_number <= 0:
+        raise ValueError(
+            "round_number must be greater than zero."
         )
 
-        counter = 0
+    if not isinstance(seed, bytes):
+        raise TypeError(
+            "seed must be bytes."
+        )
+
+    context = cls.canonicalize(
+        giveaway_id=giveaway_id,
+        guild_id=guild_id,
+        message_id=message_id,
+        participants=normalized,
+        winner_count=winner_count,
+        round_number=round_number,
+    )
+
+    key = cls.derive_key(
+        seed,
+        context,
+    )
+
+    pool = list(normalized)
+    winners: list[str] = []
+    counter = 0
+
+    for index in range(winner_count):
+        offset, counter = cls.randbelow(
+            key,
+            len(pool) - index,
+            counter,
+        )
+
+        selected_index = index + offset
+
+        pool[index], pool[selected_index] = (
+            pool[selected_index],
+            pool[index],
+        )
+
+        winners.append(
+            pool[index]
+        )
+
+    commitment = cls.commitment(seed)
+
+    proof_payload = (
+        cls.algorithm.encode("utf-8")
+        + b"|"
+        + seed
+        + b"|"
+        + context
+        + b"|"
+        + "\n".join(winners).encode("utf-8")
+    )
+
+    proof = hashlib.sha256(
+        proof_payload
+    ).hexdigest()
+
+    return RandomSelection(
+        winners=tuple(winners),
+        commitment=commitment,
+        proof=proof,
+        algorithm=cls.algorithm,
+    )
     # ========================================================
     # SECURE CHOICE
     # ========================================================

@@ -2465,17 +2465,17 @@ class TMusic(commands.Cog):
 
         try:
 
-await db.audit.record(
-    interaction.guild.id,
-    actor_id=interaction.user.id,
-    action="tmusic.add",
-    target_id=subscription.id,
-    reason=(
-        f"artist={subscription.artist_name};"
-        f"providers={','.join(subscription.providers)};"
-        f"channel={subscription.channel_id}"
-    ),
-)
+            await db.audit.record(
+                interaction.guild.id,
+                actor_id=interaction.user.id,
+                action="tmusic.add",
+                target_id=subscription.id,
+                reason=(
+                    f"artist={subscription.artist_name};"
+                    f"providers={','.join(subscription.providers)};"
+                    f"channel={subscription.channel_id}"
+                ),
+            )
 
         except Exception:
 
@@ -2785,13 +2785,13 @@ await db.audit.record(
 
         try:
 
-await db.audit.record(
-    interaction.guild.id,
-    actor_id=interaction.user.id,
-    action="tmusic.pause",
-    target_id=subscription.id,
-    reason=f"artist={subscription.artist_name}",
-)
+            await db.audit.record(
+                interaction.guild.id,
+                actor_id=interaction.user.id,
+                action="tmusic.pause",
+                target_id=subscription.id,
+                reason=f"artist={subscription.artist_name}",
+            )
 
         except Exception:
 
@@ -2869,13 +2869,13 @@ await db.audit.record(
 
         try:
 
-await db.audit.record(
-    interaction.guild.id,
-    actor_id=interaction.user.id,
-    action="tmusic.resume",
-    target_id=subscription.id,
-    reason=f"artist={subscription.artist_name}",
-)
+            await db.audit.record(
+                interaction.guild.id,
+                actor_id=interaction.user.id,
+                action="tmusic.resume",
+                target_id=subscription.id,
+                reason=f"artist={subscription.artist_name}",
+            )
 
         except Exception:
 
@@ -3020,16 +3020,15 @@ class RemoveTrackerView(
             )
 
             return
-
         try:
 
-await db.audit.record(
-    interaction.guild.id,
-    actor_id=interaction.user.id,
-    action="tmusic.remove",
-    target_id=self.subscription.id,
-    reason=f"artist={self.subscription.artist_name}",
-)
+            await db.audit.record(
+                interaction.guild.id,
+                actor_id=interaction.user.id,
+                action="tmusic.remove",
+                target_id=self.subscription.id,
+                reason=f"artist={self.subscription.artist_name}",
+            )
 
         except Exception:
 

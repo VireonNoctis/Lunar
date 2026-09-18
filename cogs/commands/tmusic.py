@@ -462,61 +462,57 @@ class MusicSubscription:
 # ============================================================
 # DATABASE STORAGE
 # ============================================================
-
 class TMusicStorage:
 
- @staticmethod
-async def load(
-    guild_id: int,
-) -> list[MusicSubscription]:
+    @staticmethod
+    async def load(
+        guild_id: int,
+    ) -> list[MusicSubscription]:
 
-    data = await db.settings.get(
-        SETTINGS_SCOPE,
-        guild_id,
-        SETTINGS_KEY,
-        default=[],
-    )
+        data = await db.settings.get(
+            SETTINGS_SCOPE,
+            guild_id,
+            SETTINGS_KEY,
+            default=[],
+        )
 
-    if not isinstance(data, list):
-        return []
+        if not isinstance(data, list):
+            return []
 
-    subscriptions: list[MusicSubscription] = []
+        subscriptions: list[MusicSubscription] = []
 
-    for item in data:
-        if not isinstance(item, dict):
-            continue
+        for item in data:
+            if not isinstance(item, dict):
+                continue
 
-        try:
-            subscription = MusicSubscription.from_dict(item)
+            try:
+                subscription = MusicSubscription.from_dict(item)
 
-            if subscription.id:
-                subscriptions.append(subscription)
+                if subscription.id:
+                    subscriptions.append(subscription)
 
-        except (TypeError, ValueError):
-            log.exception(
-                "Invalid TMusic subscription"
-            )
+            except (TypeError, ValueError):
+                log.exception(
+                    "Invalid TMusic subscription"
+                )
 
-    return subscriptions
+        return subscriptions
 
     @staticmethod
     async def save(
         guild_id: int,
-        subscriptions: list[
-            MusicSubscription
-        ],
+        subscriptions: list[MusicSubscription],
     ) -> None:
 
-await db.settings.set(
-    SETTINGS_SCOPE,
-    guild_id,
-    SETTINGS_KEY,
-    [
-        subscription.to_dict()
-        for subscription in subscriptions
-    ],
-)
-
+        await db.settings.set(
+            SETTINGS_SCOPE,
+            guild_id,
+            SETTINGS_KEY,
+            [
+                subscription.to_dict()
+                for subscription in subscriptions
+            ],
+        )
     @staticmethod
     async def find(
         guild_id: int,

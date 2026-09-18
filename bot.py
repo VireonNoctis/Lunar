@@ -8,16 +8,16 @@ import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-
+from dotenv import load_dotenv
 from cogs.utilities.database import db
 from cogs.utilities.emoji import EMOJI
 from cogs.commands.linkaccount import LinkUsernameModal
-from cogs.utilities.errors import install_error_logging
+from cogs.utilities.error import install_error_logging
 
 # ============================================================
 # CONFIG
 # ============================================================
-
+load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
 if not TOKEN:
@@ -111,13 +111,7 @@ bot = commands.Bot(
     command_prefix="?",
     intents=intents,
     status=discord.Status.idle,
-)
-bot = commands.Bot(
-    command_prefix=COMMAND_PREFIX,
-    intents=intents,
-)
 
-install_error_logging(bot)
 
 # Runtime maintenance state.
 #
@@ -847,63 +841,26 @@ async def rotating_presence():
 
     global presence_index
 
-    website_status = latest_status[
-        "website_status"
+    statuses = [
+        "🌙 Lunar Website",
+        "🌐 Lunar API",
+        "✨ Lunar Systems",
+        "📊 Lunar Community",
     ]
 
-    api_status = latest_status[
-        "api_status"
+    status = statuses[
+        presence_index % len(statuses)
     ]
 
-    if presence_index == 0:
+    await bot.change_presence(
+        status=discord.Status.idle,
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name=status,
+        ),
+    )
 
-        state = status_text(
-            website_status
-        )
-
-        activity_name = (
-            f"{EMOJI['lunar']} "
-            f"Website • {state}"
-        )
-
-    else:
-
-        state = status_text(
-            api_status
-        )
-
-        activity_name = (
-            f"{EMOJI['dev']} "
-            f"API • {state}"
-        )
-
-    try:
-
-        await bot.change_presence(
-            status=discord.Status.idle,
-            activity=discord.Activity(
-                type=(
-                    discord.ActivityType.watching
-                ),
-                name=activity_name,
-            ),
-        )
-
-        logger.debug(
-            "Presence updated: Watching %s",
-            activity_name,
-        )
-
-    except Exception:
-
-        logger.exception(
-            "Failed to update bot presence."
-        )
-
-    presence_index = (
-        presence_index + 1
-    ) % 2
-
+    presence_index += 1
 
 @rotating_presence.before_loop
 async def before_rotating_presence():
@@ -991,14 +948,13 @@ async def sync_commands():
                 "Failed to sync slash commands."
             )
 
-
 # ============================================================
 # COG LOADING
 # ============================================================
 
 async def load_cog(
     module: str,
-):
+) -> bool:
 
     try:
 
@@ -1011,6 +967,8 @@ async def load_cog(
             module,
         )
 
+        return True
+
     except commands.ExtensionAlreadyLoaded:
 
         logger.debug(
@@ -1018,12 +976,16 @@ async def load_cog(
             module,
         )
 
+        return True
+
     except Exception:
 
         logger.exception(
             "Failed to load cog: %s",
             module,
         )
+
+        return False
 
 
 async def reload_cog(
@@ -1088,8 +1050,6 @@ async def unload_cog(
             "Failed to unload cog: %s",
             module,
         )
-
-
 # ============================================================
 # COG WATCHER
 # ============================================================
@@ -1418,16 +1378,20 @@ async def on_ready():
     )
 
     # Keep the bot Idle.
-    await bot.change_presence(
-        status=discord.Status.idle,
-        activity=discord.Activity(
-            type=discord.ActivityType.watching,
-            name=(
-                f"{EMOJI['lunar']} "
-                "Website • Checking"
-            ),
-        ),
-    )
+await bot.change_presence(
+    status=discord.Status.idle,
+    activity=discord.Activity(
+        type=discord.ActivityType.watching,
+        name="🌙 Lunar Website • Checking",
+    ),
+)
+    
+    async def load_all_cogs():
+    discovered = discover_cogs()
+
+    for module, (_, modified_time) in discovered.items():
+        await load_cog(module)
+        loaded_cogs[module] = modified_time
 
     await sync_commands()
 
@@ -1444,41 +1408,6 @@ async def on_ready():
         rotating_presence.start()
 
 
-# ============================================================
-# STARTUP
-# ============================================================
-
-async def main():
-
-    COGS_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    # --------------------------------------------------------
-    # Database first
-    # --------------------------------------------------------
-
-    await db.initialize()
-
-    # --------------------------------------------------------
-    # Restore persistent maintenance state
-    # BEFORE Discord starts accepting commands.
-    # --------------------------------------------------------
-
-    await load_maintenance_state()
-
-    try:
-
-        async with bot:
-
-            await bot.start(
-                TOKEN
-            )
-
-    finally:
-
-        await db.close()
 
 
 # ============================================================
@@ -1497,7 +1426,7 @@ async def main():
         logger.info("ScyllaDB initialized successfully.")
 
         await load_maintenance_state()
-
+        install_error_logging(bot)
         async with bot:
             await bot.start(TOKEN)
 

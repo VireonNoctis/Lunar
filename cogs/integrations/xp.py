@@ -662,47 +662,45 @@ class XP(commands.Cog):
                 log.exception(
                     "Failed to send XP log message"
                 )
-
         # ----------------------------------------------------
         # Embed
-        # ----------------------------------------------------       
+        # ----------------------------------------------------
 
-     embed = discord.Embed(
-    color=0x7C5CFF,
-    description=(
-        f"<a:65270roseblooming:1369250407225884672> "
-        f"**{username}** earned **+{xp_granted} XP**"
-    ),
-)
+        embed = discord.Embed(
+            color=0x7C5CFF,
+            description=(
+                f"<a:65270roseblooming:1369250407225884672> "
+                f"**{username}** earned **+{xp_granted} XP**"
+            ),
+        )
 
-if self.bot.user:
-    embed.set_author(
-        name="🌙 Lunar XP",
-        icon_url=self.bot.user.display_avatar.url,
-    )
+        if self.bot.user:
+            embed.set_author(
+                name="🌙 Lunar XP",
+                icon_url=self.bot.user.display_avatar.url,
+            )
 
-embed.add_field(
-    name="<a:59120white:1369250400401620992> Level",
-    value=f"**{new_level}**",
-    inline=True,
-)
+        embed.add_field(
+            name="<a:59120white:1369250400401620992> Level",
+            value=f"**{new_level}**",
+            inline=True,
+        )
 
-embed.add_field(
-    name="<a:59586leftwing:1369250402834583693> Current XP",
-    value=f"**{new_xp}**",
-    inline=True,
-)
+        embed.add_field(
+            name="<a:59586leftwing:1369250402834583693> Current XP",
+            value=f"**{new_xp}**",
+            inline=True,
+        )
 
-if leveled_up:
-    embed.add_field(
-        name="<a:72687pink:1369250415971012689> Level Up!",
-        value=f":97637pink: **{previous_level}** → **{new_level}**",
-        inline=False,
-    )
+        if leveled_up:
+            embed.add_field(
+                name="<a:72687pink:1369250415971012689> Level Up!",
+                value=f":97637pink: **{previous_level}** → **{new_level}**",
+                inline=False,
+            )
 
-embed.set_footer(text="☾ Lunar XP")
-embed.timestamp = discord.utils.utcnow()
-
+        embed.set_footer(text="☾ Lunar XP")
+        embed.timestamp = discord.utils.utcnow()
         # ----------------------------------------------------
         # Send XP embed
         # ----------------------------------------------------

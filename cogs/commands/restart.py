@@ -4,7 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from utilities.emoji import EMOJI
+from cogs.utilities.emoji import EMOJI
 
 
 OWNERS = {

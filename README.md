@@ -73,7 +73,7 @@ Lunar Integrations
 ---
 
 Project Structure
-
+```
 Lunar-main/
 │
 ├── bot.py
@@ -130,7 +130,7 @@ Lunar-main/
 └── dashboard/
     └── backend/
         └── main.py
-
+```
 ---
 
 Requirements
@@ -158,29 +158,29 @@ python3 --version
 Installation
 
 Windows
-
+```
 cd Lunar-main
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv
 python bot.py
-
+```
 ---
 
 Linux / macOS
-
+```
 cd Lunar-main
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv
 python bot.py
-
+```
 ---
 
 Environment Configuration
-
+```
 Create a ".env" file in the root directory:
 
 TOKEN=your_discord_bot_token
@@ -198,11 +198,11 @@ SOUNDCLOUD_CLIENT_ID=your_soundcloud_client_id
 TMUSIC_POLL_INTERVAL_MINUTES=10
 
 «Never commit your real ".env" file to GitHub or share your Discord bot token publicly.»
-
+```
 ---
 
 Discord Bot Setup
-
+```
 Create a Discord application through the Discord Developer Portal.
 
 Create a bot and place its token inside:
@@ -217,7 +217,7 @@ Server Members Intent
 These must be enabled in the Discord Developer Portal.
 
 The bot also needs the required permissions in the Discord server where it is installed.
-
+```
 ---
 
 Database
@@ -225,9 +225,9 @@ Database
 Lunar uses a ScyllaDB/Cassandra-compatible database layer.
 
 Install the Python driver with:
-
+```
 pip install scylla-driver
-
+```
 The database layer uses the Cassandra-compatible Python modules provided by the driver.
 
 A typical local ScyllaDB configuration uses:
@@ -258,7 +258,7 @@ The Lunar dashboard is currently being completely revamped.
 The existing dashboard implementation should be considered transitional and is not the final Lunar dashboard.
 
 The new dashboard is being designed around a cleaner architecture connecting:
-
+```
 Lunar Bot
     │
     ├── Discord
@@ -271,7 +271,7 @@ Lunar Bot
             ├── Configuration
             ├── Account systems
             └── Administrative controls
-
+```
 Until the revamp is complete, Discord remains the primary interface for Lunar management.
 
 ---
@@ -308,49 +308,49 @@ A Linux VPS is recommended for running Lunar continuously.
 The following setup is intended for Ubuntu/Debian-based VPS systems.
 
 1. Update the VPS
-
-sudo apt update && sudo apt upgrade -y
+`
+sudo apt update && sudo apt upgrade -y`
 
 Install the required packages:
-
-sudo apt install -y python3 python3-pip python3-venv git
+`
+sudo apt install -y python3 python3-pip python3-venv git`
 
 Verify Python:
-
-python3 --version
+`
+python3 --version`
 
 ---
 
 2. Clone Lunar
-
+`
 git clone YOUR_REPOSITORY_URL Lunar
-cd Lunar
+cd Lunar`
 
 You may also upload the project directly to the VPS instead of using Git.
 
 ---
 
 3. Create a Virtual Environment
-
+```
 python3 -m venv .venv
 source .venv/bin/activate
-
+```
 Upgrade pip:
-
-python -m pip install --upgrade pip
+`
+python -m pip install --upgrade pip`
 
 Install Lunar:
-
-python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv
+`
+python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv`
 
 For dashboard development:
-
-python -m pip install -U fastapi pydantic uvicorn aioredis sqlalchemy
+`
+python -m pip install -U fastapi pydantic uvicorn aioredis sqlalchemy`
 
 ---
 
 4. Configure ".env"
-
+```
 nano .env
 
 Add your production environment variables:
@@ -370,15 +370,15 @@ SOUNDCLOUD_CLIENT_ID=your_soundcloud_client_id
 TMUSIC_POLL_INTERVAL_MINUTES=10
 
 Save the file and make sure it is not publicly accessible.
-
+```
 ---
 
 VPS Testing
 
 Before setting up Lunar as a permanent service, test it manually:
-
+`
 source .venv/bin/activate
-python bot.py
+python bot.py`
 
 If the bot starts correctly, stop it with:
 
@@ -398,8 +398,8 @@ Using "systemd" allows Lunar to automatically:
 - Store logs through "journalctl"
 
 Create the service file:
-
-sudo nano /etc/systemd/system/lunar.service
+`
+sudo nano /etc/systemd/system/lunar.service`
 
 Paste:
 
@@ -420,9 +420,9 @@ Environment=PYTHONUNBUFFERED=1
 WantedBy=multi-user.target
 
 Replace:
-
+`
 YOUR_VPS_USERNAME
-
+`
 with the actual VPS username.
 
 Reload "systemd":
@@ -560,7 +560,7 @@ If a Discord token or API credential is accidentally exposed, revoke/regenerate 
 Production Layout
 
 A typical VPS installation:
-
+```
 /home/username/Lunar/
 │
 ├── .venv/
@@ -573,13 +573,13 @@ A typical VPS installation:
 │
 └── dashboard/
     └── backend/
-
+```
 System service:
 
 /etc/systemd/system/lunar.service
 
 Production architecture:
-
+```
                     ┌──────────────┐
                     │   Discord    │
                     └──────┬───────┘
@@ -593,7 +593,7 @@ Production architecture:
         ┌─────▼─────┐ ┌────▼─────┐ ┌──▼──────────┐
         │ ScyllaDB  │ │ Lunar API│ │ Dashboard   │
         └───────────┘ └──────────┘ └─────────────┘
-
+```
 ---
 
 Troubleshooting

@@ -1,647 +1,271 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
-import threading
 from typing import Any
 
-import discord
-from discord.ext import commands
-from flask import Flask, jsonify, request
+import uvicorn
+from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 
 log = logging.getLogger("Lunar.API")
 
-
-# ============================================================
-# CONFIG
-# ============================================================
-
 API_HOST = os.getenv("LUNAR_API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("LUNAR_API_PORT", "8080"))
+API_KEY = os.getenv("LUNAR_API_KEY", "").strip()
+API_PREFIX = os.getenv("LUNAR_API_PREFIX", "/api/v1").rstrip("/")
+API_ORIGIN = os.getenv("LUNAR_API_ORIGIN", "https://lunarx.to").strip()
+API_MAX_BODY = int(
+    os.getenv(
+        "LUNAR_API_MAX_BODY",
+        str(2 * 1024 * 1024),
+    )
+)
 
-# Secret shared between LunarX backend and this bot.
-API_KEY = os.getenv("LUNAR_API_KEY")
+app = FastAPI(
+    title="Lunar API",
+    version="1.0.0",
+    docs_url=f"{API_PREFIX}/docs",
+    redoc_url=f"{API_PREFIX}/redoc",
+    openapi_url=f"{API_PREFIX}/openapi.json",
+)
 
-# Discord channel where new cards are posted.
-CARD_CHANNEL_ID = 69
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[API_ORIGIN] if API_ORIGIN else [],
+    allow_credentials=False,
+    allow_methods=[
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+    ],
+    allow_headers=["*"],
+)
 
-app = Flask(__name__)
-api_cog: "LunarAPI | None" = None
+
+@app.middleware("http")
+async def body_limit(
+    request: Request,
+    call_next,
+):
+    content_length = request.headers.get("content-length")
+
+    if content_length:
+        try:
+            if int(content_length) > API_MAX_BODY:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "ok": False,
+                        "error": "Request body is too large.",
+                    },
+                )
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "error": "Invalid Content-Length header.",
+                },
+            )
+
+    return await call_next(request)
 
 
-# ============================================================
-# AUTH
-# ============================================================
-
-def is_authorized() -> bool:
-  
-    if not API_KEY:
+def _valid_key(
+    supplied: str | None,
+) -> bool:
+    if not API_KEY or not supplied:
         return False
 
-    supplied = request.headers.get(
-        "X-Lunar-API-Key"
-    )
-
-    return supplied == API_KEY
-
-
-# ============================================================
-# BOT LOOP BRIDGE
-# ============================================================
-
-def run_on_bot_loop(
-    bot: commands.Bot,
-    coroutine,
-    timeout: float = 30.0,
-):
- 
-
-    future = asyncio.run_coroutine_threadsafe(
-        coroutine,
-        bot.loop,
-    )
-
-    return future.result(timeout=timeout)
-
-
-# ============================================================
-# HEALTH
-# ============================================================
-
-@app.get("/")
-def index():
-    return jsonify(
-        {
-            "service": "Lunar Discord API",
-            "status": "online",
-        }
+    return hmac.compare_digest(
+        supplied.encode("utf-8"),
+        API_KEY.encode("utf-8"),
     )
 
 
-@app.get("/health")
-def health():
-    return jsonify(
-        {
-            "ok": True,
-            "discord": (
-                api_cog is not None
-                and api_cog.bot.is_ready()
-            ),
-        }
-    )
+def _extract_key(
+    x_lunar_api_key: str | None,
+    authorization: str | None,
+) -> str | None:
+    if x_lunar_api_key:
+        return x_lunar_api_key.strip()
 
+    if authorization:
+        scheme, _, value = authorization.partition(" ")
 
-# ============================================================
-# CARD POSTING ENDPOINT
-# ============================================================
-
-@app.post("/api/cards") #need this
-def receive_cards():
-
-
-    # --------------------------------------------------------
-    # AUTHENTICATION
-    # --------------------------------------------------------
-
-    if not is_authorized():
-        return jsonify(
-            {
-                "ok": False,
-                "error": "Unauthorized",
-            }
-        ), 401
-
-    # --------------------------------------------------------
-    # JSON
-    # --------------------------------------------------------
-
-    data: Any = request.get_json(
-        silent=True
-    )
-
-    if not isinstance(data, dict):
-        return jsonify(
-            {
-                "ok": False,
-                "error": "Invalid JSON body.",
-            }
-        ), 400
-
-    cards = data.get("cards")
-
-    if not isinstance(cards, list):
-        return jsonify(
-            {
-                "ok": False,
-                "error": "'cards' must be an array.",
-            }
-        ), 400
-
-    if not cards:
-        return jsonify(
-            {
-                "ok": False,
-                "error": "No cards supplied.",
-            }
-        ), 400
-
-    if api_cog is None:
-        return jsonify(
-            {
-                "ok": False,
-                "error": "API system is not ready.",
-            }
-        ), 503
-
-    # --------------------------------------------------------
-    # PROCESS THROUGH DISCORD BOT
-    # --------------------------------------------------------
-
-    try:
-
-        result = run_on_bot_loop(
-            api_cog.bot,
-            api_cog.post_cards(cards),
-        )
-
-    except TimeoutError:
-
-        log.exception(
-            "Timed out while posting cards."
-        )
-
-        return jsonify(
-            {
-                "ok": False,
-                "error": "Discord operation timed out.",
-            }
-        ), 504
-
-    except Exception:
-
-        log.exception(
-            "Failed to post cards."
-        )
-
-        return jsonify(
-            {
-                "ok": False,
-                "error": "Failed to process cards.",
-            }
-        ), 500
-
-    return jsonify(
-        {
-            "ok": True,
-            "posted": result["posted"],
-            "failed": result["failed"],
-        }
-    ), 200
-
-
-# ============================================================
-# DISCORD COG
-# ============================================================
-
-class LunarAPI(commands.Cog):
-    """
-    Flask API integration for LunarX.
-
-    Flask runs beside Discord.py in its own thread.
-    """
-
-    def __init__(
-        self,
-        bot: commands.Bot,
-    ):
-        self.bot = bot
-        self.server_thread: threading.Thread | None = None
-
-        global api_cog
-        api_cog = self
-
-    # ========================================================
-    # CARD PROCESSING
-    # ========================================================
-
-    async def post_cards(
-        self,
-        cards: list[dict[str, Any]],
-    ) -> dict[str, int]:
-        """
-        Post every card received from LunarX.
-
-        Duplicate cards are intentionally NOT removed.
-
-        If LunarX sends the same JSON object multiple times,
-        each occurrence will be posted.
-        """
-
-        channel = self.bot.get_channel(
-            CARD_CHANNEL_ID
-        )
-
-        if channel is None:
-            raise RuntimeError(
-                f"Card channel {CARD_CHANNEL_ID} was not found."
-            )
-
-        if not isinstance(
-            channel,
-            discord.abc.Messageable,
+        if (
+            scheme.lower() == "bearer"
+            and value.strip()
         ):
-            raise RuntimeError(
-                "Configured card channel is not messageable."
-            )
+            return value.strip()
 
-        posted = 0
-        failed = 0
+    return None
 
-        for card in cards:
 
-            if not isinstance(card, dict):
-                failed += 1
-                continue
-
-            try:
-
-                embed = self.build_card_embed(
-                    card
-                )
-
-                await channel.send(
-                    embed=embed
-                )
-
-                posted += 1
-
-            except Exception:
-
-                failed += 1
-
-                log.exception(
-                    "Failed to post card: %r",
-                    card,
-                )
-
-        return {
-            "posted": posted,
-            "failed": failed,
-        }
-
-    
-@staticmethod
-def build_card_embed(
-    card: dict[str, Any],
-) -> discord.Embed:
-    """
-    Build a polished Lunar card embed with the card artwork
-    displayed on the right side.
-    """
-
-    # ========================================================
-    # BASIC INFORMATION
-    # ========================================================
-
-    name = str(
-        card.get("name", "Unknown Card")
-    )
-
-    rarity = int(
-        card.get("rarity", 0) or 0
-    )
-
-    stars = str(
-        card.get(
-            "stars",
-            "★" * rarity,
-        )
-    )
-
-    role = str(
-        card.get("role")
-        or card.get("class")
-        or "Unknown"
-    )
-
-    element = str(
-        card.get(
-            "element",
-            "Unknown",
-        )
-    )
-
-    image_url = card.get("image_url")
-
-    template_id = str(
-        card.get(
-            "template_id",
-            "Unknown",
-        )
-    )
-
-    submitted_by = str(
-        card.get(
-            "submitted_by",
-            "Unknown",
-        )
-    )
-
-    copies = int(
-        card.get(
-            "copies",
-            0,
-        ) or 0
-    )
-
-    votes = int(
-        card.get(
-            "votes",
-            0,
-        ) or 0
-    )
-
-    # ========================================================
-    # STATS
-    # ========================================================
-
-    attack = int(
-        card.get(
-            "base_attack",
-            0,
-        ) or 0
-    )
-
-    defense = int(
-        card.get(
-            "base_defense",
-            0,
-        ) or 0
-    )
-
-    hp = int(
-        card.get(
-            "base_hp",
-            0,
-        ) or 0
-    )
-
-    # ========================================================
-    # EMBED
-    # ========================================================
-
-    embed = discord.Embed(
-        title=f"{stars}  {name}",
-        description=(
-            f"**{role}**\n"
-            f"**Element:** `{element}`"
-        ),
-        color=discord.Color.gold(),
-    )
-
-    # ========================================================
-    # RIGHT-SIDE CARD ART
-    # ========================================================
-    #
-    # set_thumbnail() places the image on the right side
-    # of the Discord embed.
-    #
-
-    if image_url:
-        embed.set_thumbnail(
-            url=str(image_url)
-        )
-
-    # ========================================================
-    # STATS
-    # ========================================================
-
-    embed.add_field(
-        name="⚔️ Attack",
-        value=f"**{attack:,}**",
-        inline=True,
-    )
-
-    embed.add_field(
-        name="🛡️ Defense",
-        value=f"**{defense:,}**",
-        inline=True,
-    )
-
-    embed.add_field(
-        name="❤️ HP",
-        value=f"**{hp:,}**",
-        inline=True,
-    )
-
-    # ========================================================
-    # CARD INFORMATION
-    # ========================================================
-
-    embed.add_field(
-        name="🌙 Card Information",
-        value=(
-            f"**Rarity:** {stars}\n"
-            f"**Role:** {role}\n"
-            f"**Element:** {element}\n"
-            f"**Template:** `{template_id}`"
-        ),
-        inline=False,
-    )
-
-    # ========================================================
-    # ABILITIES
-    # ========================================================
-
-    abilities = card.get(
-        "abilities",
-        [],
-    )
-
-    if isinstance(
-        abilities,
-        list,
-    ):
-
-        valid_abilities = [
-            ability
-            for ability in abilities
-            if isinstance(
-                ability,
-                dict,
-            )
-        ]
-
-        for index, ability in enumerate(
-            valid_abilities,
-            start=1,
-        ):
-
-            ability_name = str(
-                ability.get(
-                    "name",
-                    "Ability",
-                )
-            )
-
-            ability_description = str(
-                ability.get(
-                    "description",
-                    "No description available.",
-                )
-            )
-
-            if len(ability_description) > 1024:
-                ability_description = (
-                    ability_description[:1021]
-                    + "..."
-                )
-
-            # One ability gets a cleaner title.
-            if len(valid_abilities) == 1:
-                field_name = (
-                    f"✨ {ability_name}"
-                )
-            else:
-                field_name = (
-                    f"✨ Ability {index} — "
-                    f"{ability_name}"
-                )
-
-            embed.add_field(
-                name=field_name,
-                value=ability_description,
-                inline=False,
-            )
-
-    # ========================================================
-    # FALLBACK SKILL
-    # ========================================================
-
-    elif card.get("skill_name"):
-
-        skill_name = str(
-            card.get(
-                "skill_name"
-            )
-        )
-
-        skill_description = str(
-            card.get(
-                "skill_description",
-                "No description available.",
-            )
-        )
-
-        if len(skill_description) > 1024:
-            skill_description = (
-                skill_description[:1021]
-                + "..."
-            )
-
-        embed.add_field(
-            name=f"✨ {skill_name}",
-            value=skill_description,
-            inline=False,
-        )
-
-    # ========================================================
-    # AVAILABILITY
-    # ========================================================
-
-    embed.add_field(
-        name="📦 Availability",
-        value=(
-            f"**Copies:** `{copies:,}`\n"
-            f"**Votes:** `{votes:,}`"
-        ),
-        inline=True,
-    )
-
-    embed.add_field(
-        name="👤 Submitted By",
-        value=f"`{submitted_by}`",
-        inline=True,
-    )
-
-    # ========================================================
-    # FOOTER
-    # ========================================================
-
-    embed.set_footer(
-        text=(
-            f"Lunar • {template_id}"
-        )
-    )
-
-    return embed
- 
-
-    # ========================================================
-    # SERVER
-    # ========================================================
-
-    def start_server(self) -> None:
-
-        if self.server_thread is not None:
-            return
-
-        self.server_thread = threading.Thread(
-            target=self.run_server,
-            name="LunarFlaskAPI",
-            daemon=True,
-        )
-
-        self.server_thread.start()
-
-        log.info(
-            "Lunar API listening on %s:%s",
-            API_HOST,
-            API_PORT,
-        )
-
-    def run_server(self) -> None:
-
-        app.run(
-            host=API_HOST,
-            port=API_PORT,
-            debug=False,
-            use_reloader=False,
-            threaded=True,
-        )
-
-    # ========================================================
-    # COG LOAD
-    # ========================================================
-
-    async def cog_load(self) -> None:
-        self.start_server()
-
-        log.info(
-            "Lunar Flask API loaded."
-        )
-
-    async def cog_unload(self) -> None:
-
-        global api_cog
-
-        api_cog = None
-
-        log.info(
-            "Lunar Flask API unloaded."
-        )
-
-
-# ============================================================
-# SETUP
-# ============================================================
-
-async def setup(
-    bot: commands.Bot,
+def require_api_key(
+    x_lunar_api_key: str | None,
+    authorization: str | None,
 ) -> None:
+    if not API_KEY:
+        log.error(
+            "LUNAR_API_KEY is not configured; "
+            "protected API access is disabled."
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="API authentication is not configured.",
+        )
 
-    await bot.add_cog(
-        LunarAPI(bot)
+    supplied = _extract_key(
+        x_lunar_api_key,
+        authorization,
     )
+
+    if not _valid_key(supplied):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized.",
+        )
+
+
+def protected(
+    x_lunar_api_key: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+) -> None:
+    require_api_key(
+        x_lunar_api_key,
+        authorization,
+    )
+
+
+api_router = APIRouter(
+    prefix=API_PREFIX,
+)
+
+
+@api_router.get("")
+async def api_index() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "service": "Lunar API",
+        "version": "1.0.0",
+        "docs": f"{API_PREFIX}/docs",
+    }
+
+
+@api_router.get("/health")
+async def api_health() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "status": "online",
+    }
+
+
+app.include_router(api_router)
+
+
+_registered_routers: dict[str, APIRouter] = {}
+
+_server: uvicorn.Server | None = None
+_server_task: asyncio.Task[Any] | None = None
+
+
+def register_router(
+    router: APIRouter,
+    key: str,
+) -> None:
+    unregister_router(key)
+
+    app.include_router(router)
+    _registered_routers[key] = router
+
+
+def unregister_router(
+    key: str,
+) -> None:
+    router = _registered_routers.pop(
+        key,
+        None,
+    )
+
+    if router is None:
+        return
+
+    router_routes = set(router.routes)
+
+    app.router.routes[:] = [
+        route
+        for route in app.router.routes
+        if route not in router_routes
+    ]
+
+
+def api_route_count() -> int:
+    return len(app.router.routes)
+
+
+async def start_api() -> None:
+    global _server
+    global _server_task
+
+    if (
+        _server_task is not None
+        and not _server_task.done()
+    ):
+        return
+
+    if not API_KEY:
+        log.warning(
+            "LUNAR_API_KEY is not configured. "
+            "Protected endpoints will return 503."
+        )
+
+    config = uvicorn.Config(
+        app,
+        host=API_HOST,
+        port=API_PORT,
+        log_config=None,
+        access_log=False,
+        loop="asyncio",
+        lifespan="on",
+    )
+
+    _server = uvicorn.Server(config)
+
+    _server_task = asyncio.create_task(
+        _server.serve(),
+        name="lunar-api-server",
+    )
+
+    log.info(
+        "Lunar FastAPI listening on %s:%s",
+        API_HOST,
+        API_PORT,
+    )
+
+
+async def stop_api() -> None:
+    global _server
+    global _server_task
+
+    if _server is not None:
+        _server.should_exit = True
+
+    if _server_task is not None:
+        try:
+            await _server_task
+        except Exception:
+            log.exception(
+                "Lunar API shutdown failed."
+            )
+
+    _server = None
+    _server_task = None

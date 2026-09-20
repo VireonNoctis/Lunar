@@ -4,20 +4,25 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+
 import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
+
+from cogs.commands.linkaccount import LinkUsernameModal
 from cogs.utilities.database import db
 from cogs.utilities.emoji import EMOJI
-from cogs.commands.linkaccount import LinkUsernameModal
 from cogs.utilities.error import install_error_logging
+
 
 # ============================================================
 # CONFIG
 # ============================================================
+
 load_dotenv()
+
 TOKEN = os.getenv("TOKEN")
 
 if not TOKEN:
@@ -47,12 +52,12 @@ HTTP_TIMEOUT = aiohttp.ClientTimeout(
 )
 
 
-
 LUNAR_STANDARD_HEADER = {
     "bypass": " ",
     "union": " ",
     "authorization": " ",
 }
+
 
 # ============================================================
 # OWNERS
@@ -115,11 +120,7 @@ bot = commands.Bot(
 
 
 # Runtime maintenance state.
-#
-# The persistent source of truth is ScyllaDB.
-# These values are loaded during startup and then updated
-# by /maintenance.
-#
+# PostgreSQL is the persistent source of truth.
 bot.maintenance_mode = False
 bot.maintenance_reason = ""
 
@@ -131,6 +132,10 @@ bot.maintenance_reason = ""
 loaded_cogs: dict[str, float] = {}
 
 tree_sync_lock = asyncio.Lock()
+startup_lock = asyncio.Lock()
+
+startup_complete = False
+presence_index = 0
 
 latest_status: dict[str, object] = {
     "website_status": None,
@@ -141,8 +146,6 @@ latest_status: dict[str, object] = {
     "api_error": None,
 }
 
-presence_index = 0
-
 
 # ============================================================
 # MAINTENANCE STATE
@@ -150,7 +153,7 @@ presence_index = 0
 
 async def load_maintenance_state() -> None:
     """
-    Load the persistent maintenance state from ScyllaDB.
+    Load the persistent maintenance state from PostgreSQL.
 
     Stored in:
 
@@ -159,13 +162,16 @@ async def load_maintenance_state() -> None:
     """
 
     try:
+        if db.variables is None:
+            raise RuntimeError(
+                "PostgreSQL variables repository is unavailable."
+            )
 
         row = await db.variables.get(
             MAINTENANCE_VARIABLE
         )
 
         if row is None:
-
             bot.maintenance_mode = False
             bot.maintenance_reason = ""
 
@@ -177,13 +183,10 @@ async def load_maintenance_state() -> None:
             return
 
         if row.int_value is not None:
-
             bot.maintenance_mode = (
                 int(row.int_value) == 1
             )
-
         else:
-
             bot.maintenance_mode = (
                 str(
                     row.string_value or ""
@@ -212,7 +215,6 @@ async def load_maintenance_state() -> None:
         )
 
     except Exception:
-
         logger.exception(
             "Failed to load maintenance state."
         )
@@ -249,7 +251,6 @@ class LinkRequiredView(discord.ui.View):
         button: discord.ui.Button,
     ) -> None:
 
-        # Find the already-loaded LinkAccount cog.
         cog = bot.get_cog("LinkAccount")
 
         if cog is None:
@@ -262,7 +263,6 @@ class LinkRequiredView(discord.ui.View):
             )
             return
 
-        # Open the exact same modal used by /link.
         await interaction.response.send_modal(
             LinkUsernameModal(cog)
         )
@@ -312,9 +312,9 @@ async def global_interaction_check(
 
     Priority:
         1. Owners bypass everything.
-        2. Developer commands are owner-only.
-        3. Maintenance blocks normal commands.
-        4. /link is always accessible.
+        2. /link is always accessible.
+        3. Developer commands are owner-only.
+        4. Maintenance blocks normal commands.
         5. User must have a verified Lunar account.
         6. Otherwise allow execution.
     """
@@ -339,10 +339,6 @@ async def global_interaction_check(
     # --------------------------------------------------------
     # LINK COMMAND BYPASS
     # --------------------------------------------------------
-    #
-    # Users obviously need to be able to execute /link
-    # while unlinked, otherwise the system would deadlock.
-    #
 
     if command_name == "link":
         return True
@@ -408,6 +404,11 @@ async def global_interaction_check(
     # --------------------------------------------------------
 
     try:
+        if db.account_links is None:
+            raise RuntimeError(
+                "PostgreSQL account-links repository is unavailable."
+            )
+
         verified = await db.account_links.is_verified(
             user_id
         )
@@ -476,7 +477,6 @@ async def global_interaction_check(
     # --------------------------------------------------------
 
     return True
-
 
 
 # ============================================================
@@ -566,7 +566,7 @@ async def get_lunar_status() -> dict[str, object]:
     }
 
 
-async def refresh_lunar_status():
+async def refresh_lunar_status() -> dict[str, object]:
 
     global latest_status
 
@@ -589,15 +589,13 @@ async def refresh_lunar_status():
             ],
         )
 
-        return latest_status
-
     except Exception:
 
         logger.exception(
             "Failed to refresh Lunar status."
         )
 
-        return latest_status
+    return latest_status
 
 
 # ============================================================
@@ -705,7 +703,7 @@ def build_status_embed(
 
         website_value += (
             f"\n{EMOJI['error']} "
-            f"`{website_error[:250]}`"
+            f"`{str(website_error)[:250]}`"
         )
 
     api_value = (
@@ -725,7 +723,7 @@ def build_status_embed(
 
         api_value += (
             f"\n{EMOJI['error']} "
-            f"`{api_error[:250]}`"
+            f"`{str(api_error)[:250]}`"
         )
 
     embed.add_field(
@@ -757,7 +755,9 @@ def build_status_embed(
 # WEBSITE MONITOR
 # ============================================================
 
-@tasks.loop(minutes=5)
+@tasks.loop(
+    seconds=WEBSITE_CHECK_INTERVAL
+)
 async def website_status_monitor():
 
     try:
@@ -837,7 +837,9 @@ async def before_website_status_monitor():
 # ROTATING WATCHING PRESENCE
 # ============================================================
 
-@tasks.loop(seconds=PRESENCE_INTERVAL)
+@tasks.loop(
+    seconds=PRESENCE_INTERVAL
+)
 async def rotating_presence():
 
     global presence_index
@@ -863,12 +865,11 @@ async def rotating_presence():
 
     presence_index += 1
 
+
 @rotating_presence.before_loop
 async def before_rotating_presence():
 
     await bot.wait_until_ready()
-
-    await refresh_lunar_status()
 
 
 # ============================================================
@@ -905,7 +906,8 @@ def discover_cogs() -> dict[
             Path(".")
         )
 
-        # Utilities are not Discord extensions.
+        # Utilities are Python modules used by the bot,
+        # not Discord extensions to load as cogs.
         if "utilities" in relative.parts:
             continue
 
@@ -928,7 +930,7 @@ def discover_cogs() -> dict[
 # COMMAND SYNC
 # ============================================================
 
-async def sync_commands():
+async def sync_commands() -> None:
 
     async with tree_sync_lock:
 
@@ -948,6 +950,7 @@ async def sync_commands():
             logger.exception(
                 "Failed to sync slash commands."
             )
+
 
 # ============================================================
 # COG LOADING
@@ -991,7 +994,7 @@ async def load_cog(
 
 async def reload_cog(
     module: str,
-):
+) -> bool:
 
     try:
 
@@ -1004,6 +1007,8 @@ async def reload_cog(
             module,
         )
 
+        return True
+
     except commands.ExtensionNotLoaded:
 
         logger.warning(
@@ -1014,7 +1019,7 @@ async def reload_cog(
             module,
         )
 
-        await load_cog(
+        return await load_cog(
             module
         )
 
@@ -1025,10 +1030,12 @@ async def reload_cog(
             module,
         )
 
+        return False
+
 
 async def unload_cog(
     module: str,
-):
+) -> bool:
 
     try:
 
@@ -1041,9 +1048,11 @@ async def unload_cog(
             module,
         )
 
+        return True
+
     except commands.ExtensionNotLoaded:
 
-        pass
+        return True
 
     except Exception:
 
@@ -1051,11 +1060,39 @@ async def unload_cog(
             "Failed to unload cog: %s",
             module,
         )
+
+        return False
+
+
+async def load_all_cogs() -> None:
+
+    discovered = discover_cogs()
+
+    for module, (
+        _,
+        modified_time,
+    ) in sorted(
+        discovered.items()
+    ):
+
+        loaded = await load_cog(
+            module
+        )
+
+        if loaded:
+
+            loaded_cogs[
+                module
+            ] = modified_time
+
+
 # ============================================================
 # COG WATCHER
 # ============================================================
 
-@tasks.loop(seconds=SCAN_INTERVAL)
+@tasks.loop(
+    seconds=SCAN_INTERVAL
+)
 async def cog_watcher():
 
     try:
@@ -1075,15 +1112,17 @@ async def cog_watcher():
 
             if module not in loaded_cogs:
 
-                await load_cog(
+                loaded = await load_cog(
                     module
                 )
 
-                loaded_cogs[
-                    module
-                ] = modified_time
+                if loaded:
 
-                changed = True
+                    loaded_cogs[
+                        module
+                    ] = modified_time
+
+                    changed = True
 
                 continue
 
@@ -1098,15 +1137,17 @@ async def cog_watcher():
                 != old_modified_time
             ):
 
-                await reload_cog(
+                reloaded = await reload_cog(
                     module
                 )
 
-                loaded_cogs[
-                    module
-                ] = modified_time
+                if reloaded:
 
-                changed = True
+                    loaded_cogs[
+                        module
+                    ] = modified_time
+
+                    changed = True
 
         # ----------------------------------------------------
         # DELETED COGS
@@ -1119,16 +1160,18 @@ async def cog_watcher():
 
         for module in deleted:
 
-            await unload_cog(
+            unloaded = await unload_cog(
                 module
             )
 
-            loaded_cogs.pop(
-                module,
-                None,
-            )
+            if unloaded:
 
-            changed = True
+                loaded_cogs.pop(
+                    module,
+                    None,
+                )
+
+                changed = True
 
         # ----------------------------------------------------
         # SYNC
@@ -1168,14 +1211,21 @@ async def command_usage_tracker(
 
     try:
 
+        if db.command_stats is None:
+
+            raise RuntimeError(
+                "PostgreSQL command statistics repository "
+                "is unavailable."
+            )
+
         await db.command_stats.increment(
             command.qualified_name
         )
 
     except Exception:
 
-        # Command statistics must never
-        # break an otherwise successful command.
+        # Command statistics must never break
+        # an otherwise successful command.
         logger.exception(
             "Failed to record command usage: %s",
             getattr(
@@ -1372,43 +1422,71 @@ async def ping(
 @bot.event
 async def on_ready():
 
+    global startup_complete
+
     logger.info(
         "Logged in as %s (%s)",
         bot.user,
-        bot.user.id,
+        bot.user.id
+        if bot.user
+        else "unknown",
     )
 
-    # Keep the bot Idle.
-await bot.change_presence(
-    status=discord.Status.idle,
-    activity=discord.Activity(
-        type=discord.ActivityType.watching,
-        name="🌙 Lunar Website • Checking",
-    ),
-)
-    
-    async def load_all_cogs():
-    discovered = discover_cogs()
+    async with startup_lock:
 
-    for module, (_, modified_time) in discovered.items():
-        await load_cog(module)
-        loaded_cogs[module] = modified_time
+        if startup_complete:
 
-    await sync_commands()
+            logger.info(
+                "Bot reconnected; startup tasks already initialized."
+            )
 
-    if not cog_watcher.is_running():
+            return
 
-        cog_watcher.start()
+        # ----------------------------------------------------
+        # KEEP THE BOT IDLE
+        # ----------------------------------------------------
 
-    if not website_status_monitor.is_running():
+        await bot.change_presence(
+            status=discord.Status.idle,
+            activity=discord.Activity(
+                type=discord.ActivityType.watching,
+                name="🌙 Lunar Website • Checking",
+            ),
+        )
 
-        website_status_monitor.start()
+        # ----------------------------------------------------
+        # LOAD COGS
+        # ----------------------------------------------------
 
-    if not rotating_presence.is_running():
+        await load_all_cogs()
 
-        rotating_presence.start()
+        # ----------------------------------------------------
+        # SYNC COMMANDS
+        # ----------------------------------------------------
 
+        await sync_commands()
 
+        # ----------------------------------------------------
+        # START BACKGROUND TASKS
+        # ----------------------------------------------------
+
+        if not cog_watcher.is_running():
+
+            cog_watcher.start()
+
+        if not website_status_monitor.is_running():
+
+            website_status_monitor.start()
+
+        if not rotating_presence.is_running():
+
+            rotating_presence.start()
+
+        startup_complete = True
+
+        logger.info(
+            "Lunar bot startup completed successfully."
+        )
 
 
 # ============================================================
@@ -1416,35 +1494,59 @@ await bot.change_presence(
 # ============================================================
 
 async def main():
+
     COGS_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
     try:
-        logger.info("Initializing ScyllaDB...")
+
+        logger.info(
+            "Initializing PostgreSQL database..."
+        )
+
         await db.initialize()
-        logger.info("ScyllaDB initialized successfully.")
+
+        logger.info(
+            "PostgreSQL database initialized successfully."
+        )
 
         await load_maintenance_state()
-        install_error_logging(bot)
+
+        install_error_logging(
+            bot
+        )
+
         async with bot:
-            await bot.start(TOKEN)
+
+            await bot.start(
+                TOKEN
+            )
 
     except Exception:
+
         logger.exception(
             "Fatal startup error."
         )
+
         raise
 
     finally:
+
         try:
+
             await db.close()
+
         except Exception:
+
             logger.exception(
-                "Failed to close ScyllaDB."
+                "Failed to close PostgreSQL database."
             )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+
+    asyncio.run(
+        main()
+    )

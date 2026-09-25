@@ -1,198 +1,246 @@
 # Telegram Bots
 
-This folder contains the Lunar family's standalone Telegram bots, built with
-[`python-telegram-bot`](https://github.com/python-telegram-bot/python-telegram-bot).
+This folder contains the Lunar family's standalone Telegram bots, built with [`python-telegram-bot`](https://github.com/python-telegram-bot/python-telegram-bot).
 
-Each bot is a **single-file, self-contained script**:
+Each bot is a **single-file, self-contained script** with:
 
-- Its own Telegram bot token
-- Its own process (run with `python3 <file>.py`)
-- Its own JSON data file for persistence
-- No `.env` file — configuration is a `Config` dataclass at the top of the script
+* Its own Telegram bot token
+* Its own process (`python3 <file>.py`)
+* Its own JSON data file for persistence
+* No `.env` file — configuration is stored in a `Config` dataclass at the top of the script
 
-They do not share state and can be run side by side on the same machine without
-conflicting with one another.
+The bots do not share state and can be run side by side on the same machine without conflicting with one another.
 
-| Bot | File | Purpose |
-|---|---|---|
-| **Lunar** | [`lunar.py`](./lunar.py) | General-purpose / fun bot — games, utilities, external API lookups |
-| **Nova** | [`nova.py`](./nova.py) | Bridges Telegram to the Lunar website — XP, leaderboard, account linking, search |
-| **Sapphire** | [`sapphire.py`](./sapphire.py) | Group moderation bot — bans, warns, filters, anti-spam, logging |
-| **Giveaways** | *(not yet added)* | Planned Telegram giveaways bot — currently incomplete and not included in this folder |
+| Bot           | File                           | Purpose                                                                               |
+| ------------- | ------------------------------ | ------------------------------------------------------------------------------------- |
+| **Lunar**     | [`lunar.py`](.bots/lunar.py)       | General-purpose and fun bot — games, utilities, and external API lookups              |
+| **Nova**      | [`nova.py`](.bots/nova.py)         | Bridges Telegram to the Lunar website — XP, leaderboards, account linking, and search |
+| **Sapphire**  | [`sapphire.py`](.bots/sapphire.py) | Group moderation bot — bans, warnings, filters, anti-spam, and logging                |
+| **Giveaways** | *Not yet added*                | Planned Telegram giveaways bot — currently incomplete and not included in this folder |
 
 ---
 
 ## Requirements
 
-All bots require Python 3.10+ and `python-telegram-bot`. Some need extra packages:
+All bots require **Python 3.10+** and `python-telegram-bot`. Some bots require additional packages.
+
+### Lunar
 
 ```bash
-# Lunar
 pip install python-telegram-bot httpx
+```
 
-# Nova
+### Nova
+
+```bash
 pip install "python-telegram-bot[job-queue]" httpx pillow
+```
 
-# Sapphire
+### Sapphire
+
+```bash
 pip install "python-telegram-bot[job-queue]"
 ```
 
-`[job-queue]` is required by Nova and Sapphire for scheduled/background tasks
-(XP announcements, captcha timeouts, scheduled broadcasts, periodic data flushes).
-Without it, the bot still runs, but those features are disabled and a warning is
-logged on startup.
+The `[job-queue]` extra is required by **Nova** and **Sapphire** for scheduled and background tasks, including:
+
+* XP announcements
+* Captcha timeouts
+* Scheduled broadcasts
+* Periodic data flushes
+
+Without `job-queue`, the bot can still start, but these features will be disabled and a warning will be logged on startup.
 
 ---
 
 ## Configuration
 
-None of these bots read a `.env` file. Instead, open the script and edit the
-`Config` dataclass near the top before running it:
+None of these bots read from a `.env` file.
+
+Instead, open the relevant script and edit the `Config` dataclass near the top before running it:
 
 ```python
 @dataclass
 class Config:
-    token: str = "PUT_YOUR_BOT_TOKEN_HERE"   # <-- get this from @BotFather
-    owner_id: int = 0                         # <-- your numeric Telegram user ID
+    token: str = "PUT_YOUR_BOT_TOKEN_HERE"   # Get this from @BotFather
+    owner_id: int = 0                        # Your numeric Telegram user ID
     ...
 ```
 
-- `token` — the bot token from [@BotFather](https://t.me/BotFather). The bot will
-  refuse to start (Sapphire) or fail to authenticate (Lunar/Nova) until this is set.
-- `owner_id` — your numeric Telegram user ID, used for owner-only commands and
-  super-admin overrides. Leaving it at `0` disables those checks/features.
+### Configuration fields
 
-**Never commit a script with a real token filled in.**
+* **`token`** — The bot token obtained from [@BotFather](https://t.me/BotFather).
+
+  * Sapphire refuses to start until this is configured.
+  * Lunar and Nova will fail to authenticate until this is configured.
+* **`owner_id`** — Your numeric Telegram user ID. Used for owner-only commands and super-admin overrides.
+
+  * Setting this to `0` disables those checks and features.
+
+> [!WARNING]
+> **Never commit a script containing a real bot token.**
 
 ---
 
 ## Lunar — `lunar.py`
 
-General-purpose bot: quick utilities, provably-fair random/fun commands, and a
-handful of external API lookups. Every random outcome (`roll`, `flip`, `choose`,
-etc.) is drawn from `secrets` (OS CSPRNG) rather than the standard `random`
-module.
+Lunar is a general-purpose bot providing quick utilities, provably-fair random/fun commands, and several external API lookups.
 
-**Run:**
+Every random outcome (`roll`, `flip`, `choose`, etc.) is generated using Python's `secrets` module, which uses an OS-provided CSPRNG, rather than the standard `random` module.
+
+### Run
 
 ```bash
 python3 lunar.py
 ```
 
-**Data file:** `lunar_bot_users.json` (silently registers/tracks users and
-groups the bot has seen — no setup required).
+### Data file
 
-**Commands:**
+`lunar_bot_users.json`
 
-| Category | Commands |
-|---|---|
-| Info | `/help` `/about` `/ping` `/id` `/time` |
-| Utility | `/echo` `/calc` `/reverse` |
-| Fun / CSPRNG | `/roll` `/flip` `/choose` `/8ball` `/rate` `/ship` `/joke` `/fact` `/quote` |
-| External APIs | `/weather` `/crypto` `/define` `/trivia` `/advice` `/meme` `/cat` `/dog` `/qr` |
-| Owner-only | `/callall` |
+The bot silently registers and tracks users and groups it has seen. No additional setup is required.
+
+### Commands
+
+| Category          | Commands                                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------- |
+| **Info**          | `/help` · `/about` · `/ping` · `/id` · `/time`                                                 |
+| **Utility**       | `/echo` · `/calc` · `/reverse`                                                                 |
+| **Fun / CSPRNG**  | `/roll` · `/flip` · `/choose` · `/8ball` · `/rate` · `/ship` · `/joke` · `/fact` · `/quote`    |
+| **External APIs** | `/weather` · `/crypto` · `/define` · `/trivia` · `/advice` · `/meme` · `/cat` · `/dog` · `/qr` |
+| **Owner-only**    | `/callall`                                                                                     |
 
 ---
 
 ## Nova — `nova.py`
 
-Connects Telegram to the Lunar website's API: website XP syncing, leaderboards,
-account linking between Telegram and Lunar accounts, and an anime/manga search
-bridge.
+Nova connects Telegram to the Lunar website's API, providing:
 
-**Run:**
+* Website XP synchronization
+* Leaderboards
+* Account linking between Telegram and Lunar accounts
+* Anime and manga search through the Lunar API
+
+### Run
 
 ```bash
 python3 nova.py
 ```
 
-**Data file:** `nova_data.json`
+### Data file
 
-**Additional config (Lunar API):** beyond `token` and `owner_id`, Nova's
-`Config` also holds the Lunar API base URLs/endpoints and credentials:
+`nova_data.json`
+
+### Lunar API configuration
+
+In addition to `token` and `owner_id`, Nova's `Config` contains the Lunar API base URLs, endpoints, and credentials:
 
 ```python
 lunar_api_base: str = "https://api.lunarx.to/api"
 lunar_token: str = "PUT_YOUR_LUNAR_TOKEN_HERE"
-lunar_bypass_token: str = ""   # optional X-Scraper-Guard-Bypass
+lunar_bypass_token: str = ""   # Optional X-Scraper-Guard-Bypass token
 ```
 
-These must be filled in for XP sync, profile lookups, leaderboard, and
-notification features to work against the live Lunar API.
+These values must be configured for the following features to work against the live Lunar API:
 
-**Commands:**
+* XP synchronization
+* Profile lookups
+* Leaderboards
+* Notifications
 
-| Category | Commands |
-|---|---|
-| Info | `/help` `/about` `/ping` `/version` `/uptime` `/id` |
-| Account linking | `/link` `/linkverify` `/unlink` |
-| Lunar integration | `/level` `/leaderboard` `/search` |
+### Commands
+
+| Category              | Commands                                                      |
+| --------------------- | ------------------------------------------------------------- |
+| **Info**              | `/help` · `/about` · `/ping` · `/version` · `/uptime` · `/id` |
+| **Account linking**   | `/link` · `/linkverify` · `/unlink`                           |
+| **Lunar integration** | `/level` · `/leaderboard` · `/search`                         |
 
 ---
 
 ## Sapphire — `sapphire.py`
 
-Standalone group moderation bot — no fun/game/API-toy commands live here (that's
-Lunar's job). Covers bans/mutes/warns, anti-spam & anti-flood, captcha
-verification, message/content locks, welcome/goodbye/rules, filters and
-blacklists, mod-action logging, activity stats, scheduled broadcasts, and
-settings backup/restore.
+Sapphire is a standalone Telegram group moderation bot.
 
-**Run:**
+It intentionally does not include fun, game, or API-toy commands — those belong to Lunar.
+
+Sapphire provides:
+
+* Bans, mutes, and warnings
+* Anti-spam and anti-flood protection
+* Captcha verification
+* Message and content locks
+* Welcome, goodbye, and rules messages
+* Filters and blacklists
+* Moderation-action logging
+* Activity statistics
+* Scheduled broadcasts
+* Settings backup and restore
+
+### Run
 
 ```bash
 python3 sapphire.py
 ```
 
-**Data file:** `sapphire_data.json`, flushed to disk every 30 seconds via a
-background job (requires `[job-queue]`) as well as on state-changing actions.
+### Data file
 
-**Scope notes (by design):**
+`sapphire_data.json`
 
-- No anti-porn / NSFW image detection — that requires a paid vision API
-  (Google Vision, Sightengine, etc.); there's no accurate keyless alternative,
-  so it's left out rather than faked with a keyword filter.
-- No self-cloning into a new bot — the Bot API can't do this; it would require
-  automating BotFather with a *user* account (Telethon/Pyrogram-style), which is
-  out of scope here.
-- Anti-flood/anti-spam trackers and pending-captcha state are **in-memory** and
-  reset on restart. Everything else (settings, filters, warnings, stats,
-  scheduled broadcasts) is persisted to disk and reloaded on startup.
-- Night mode hours are UTC and chat-wide (no per-chat timezone config).
+The data file is flushed to disk every **30 seconds** through a background job and is also written whenever state-changing actions occur.
 
-**Commands:**
+> **Note:** Periodic background flushing requires the `[job-queue]` extra.
 
-| Category | Commands |
-|---|---|
-| Info | `/help` `/about` `/ping` `/version` `/uptime` `/id` `/info` `/userinfo` `/admins` |
-| Punishments & warnings | `/ban` `/unban` `/kick` `/mute` `/unmute` `/unmuteall` `/tban` `/tmute` `/warn` `/unwarn` `/warnings` `/resetwarns` `/warnlist` `/setwarnlimit` `/warnaction` |
-| Message & admin management | `/purge` `/del` `/pin` `/unpin` `/report` `/promote` `/demote` |
-| Protection | `/captcha` `/setcaptchatype` `/setcaptchatimeout` `/antispam` `/antiflood` `/setfloodlimit` `/setfloodaction` `/nightmode` `/setnighttime` `/antiraid` `/raidmode` `/slowmode` `/slowmodeoff` |
-| Locks | `/lock` `/unlock` `/locks` `/lockdown` `/unlockall` `/antilink` |
-| Welcome / Goodbye / Rules | `/welcome` `/setwelcome` `/resetwelcome` `/cleanwelcome` `/goodbye` `/setgoodbye` `/resetgoodbye` `/rules` `/setrules` `/resetrules` |
-| Filters & custom commands | `/filters` `/addfilter` `/removefilter` `/stopallfilters` `/badwords` `/addbadword` `/removebadword` `/clearbadwords` `/commands` `/addcommand` `/removecommand` |
-| Blacklist / Approve | `/blacklist` `/blacklistadd` `/blacklistremove` `/approve` `/unapprove` `/approved` |
-| Logging | `/setlog` `/unsetlog` `/logstatus` `/logtest` |
-| Stats | `/stats` `/trend` `/graphic` `/top10` `/myactivity` `/resetstats` |
-| Broadcasts | `/broadcast` `/schedule` `/scheduled` `/cancelschedule` |
-| Backup / config | `/exportsettings` `/importsettings` `/resetsettings` `/mutelist` `/banlist` |
-| Settings menu | `/settings` (interactive button menu) |
+### Scope notes
 
----
+The following behaviors are intentional design decisions:
 
-## Giveaways bot *(planned, not yet included)*
+* **No anti-porn / NSFW image detection** — This requires a paid vision API such as Google Vision or Sightengine. There is no accurate keyless alternative, so it is omitted rather than simulated with a keyword filter.
+* **No self-cloning into a new bot** — The Telegram Bot API does not provide this functionality. Doing so would require automating BotFather with a user account using something like Telethon or Pyrogram, which is outside the scope of this bot.
+* **Anti-flood/anti-spam trackers and pending captcha state are in-memory** and therefore reset when the bot restarts.
+* **Persistent data** — Settings, filters, warnings, statistics, and scheduled broadcasts are persisted to disk and restored on startup.
+* **Night mode** — Night mode hours use UTC and apply to the entire chat. Per-chat timezone configuration is not supported.
 
-A dedicated Telegram giveaways bot is planned for this folder but is currently
-**incomplete** and hasn't been added yet. Once it lands, it will follow the same
-pattern as the bots above (single file, own token, own data file). This
-document will be updated with its details at that time.
+### Commands
+
+| Category                       | Commands                                                                                                                                                                                                              |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Info**                       | `/help` · `/about` · `/ping` · `/version` · `/uptime` · `/id` · `/info` · `/userinfo` · `/admins`                                                                                                                     |
+| **Punishments & warnings**     | `/ban` · `/unban` · `/kick` · `/mute` · `/unmute` · `/unmuteall` · `/tban` · `/tmute` · `/warn` · `/unwarn` · `/warnings` · `/resetwarns` · `/warnlist` · `/setwarnlimit` · `/warnaction`                             |
+| **Message & admin management** | `/purge` · `/del` · `/pin` · `/unpin` · `/report` · `/promote` · `/demote`                                                                                                                                            |
+| **Protection**                 | `/captcha` · `/setcaptchatype` · `/setcaptchatimeout` · `/antispam` · `/antiflood` · `/setfloodlimit` · `/setfloodaction` · `/nightmode` · `/setnighttime` · `/antiraid` · `/raidmode` · `/slowmode` · `/slowmodeoff` |
+| **Locks**                      | `/lock` · `/unlock` · `/locks` · `/lockdown` · `/unlockall` · `/antilink`                                                                                                                                             |
+| **Welcome / Goodbye / Rules**  | `/welcome` · `/setwelcome` · `/resetwelcome` · `/cleanwelcome` · `/goodbye` · `/setgoodbye` · `/resetgoodbye` · `/rules` · `/setrules` · `/resetrules`                                                                |
+| **Filters & custom commands**  | `/filters` · `/addfilter` · `/removefilter` · `/stopallfilters` · `/badwords` · `/addbadword` · `/removebadword` · `/clearbadwords` · `/commands` · `/addcommand` · `/removecommand`                                  |
+| **Blacklist / Approve**        | `/blacklist` · `/blacklistadd` · `/blacklistremove` · `/approve` · `/unapprove` · `/approved`                                                                                                                         |
+| **Logging**                    | `/setlog` · `/unsetlog` · `/logstatus` · `/logtest`                                                                                                                                                                   |
+| **Stats**                      | `/stats` · `/trend` · `/graphic` · `/top10` · `/myactivity` · `/resetstats`                                                                                                                                           |
+| **Broadcasts**                 | `/broadcast` · `/schedule` · `/scheduled` · `/cancelschedule`                                                                                                                                                         |
+| **Backup / Config**            | `/exportsettings` · `/importsettings` · `/resetsettings` · `/mutelist` · `/banlist`                                                                                                                                   |
+| **Settings**                   | `/settings` — Interactive button menu                                                                                                                                                                                 |
 
 ---
 
-## Running bots together
+## Giveaways Bot — Planned
 
-Since each bot is a separate script with its own token and data file, you can
-run any combination of them at once, e.g.:
+A dedicated Telegram giveaways bot is planned for this folder but is currently **incomplete** and has not been added yet.
+
+Once it is ready, it will follow the same structure as the existing bots:
+
+* Single-file implementation
+* Dedicated bot token
+* Dedicated JSON data file
+* Independent process and state
+
+This document will be updated with its details when the bot is added.
+
+---
+
+## Running Bots Together
+
+Because each bot is a separate script with its own token and data file, any combination of the bots can run simultaneously.
+
+For example:
 
 ```bash
 python3 lunar.py &
@@ -200,18 +248,26 @@ python3 nova.py &
 python3 sapphire.py &
 ```
 
-For production use on a VPS, run each bot as its own `systemd` service (see the
-root [`README.md`](../../README.md) for a full `systemd` walkthrough for the
-main Discord bot — the same pattern applies here, just pointing `ExecStart` at
-the relevant Telegram bot script).
+### Production / VPS
+
+For production deployments on a VPS, run each bot as its own `systemd` service.
+
+See the root [`README.md`](../../README.md) for the full `systemd` walkthrough for the main Discord bot. The same approach applies here, with `ExecStart` pointing to the relevant Telegram bot script.
 
 ---
 
 ## Security
 
-- Tokens live in plain code in these scripts (no `.env`) — never commit a
-  filled-in token, and treat any file with a real token as a secret.
-- If a token is ever exposed, regenerate it immediately via
-  [@BotFather](https://t.me/BotFather).
-- Data files (`lunar_bot_users.json`, `nova_data.json`, `sapphire_data.json`)
-  may contain user IDs and moderation history — don't publish them.
+* Tokens are stored directly in the scripts rather than in a `.env` file.
+* **Never commit a script containing a real token.**
+* Treat any file containing a real token as a secret.
+* If a token is ever exposed, **regenerate it immediately** through [@BotFather](https://t.me/BotFather).
+* Data files may contain sensitive information such as user IDs and moderation history. Do not publish or commit them.
+
+The following files should be treated as private data:
+
+```text
+lunar_bot_users.json
+nova_data.json
+sapphire_data.json
+```

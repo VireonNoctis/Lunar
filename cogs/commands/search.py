@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import time
 
 import aiohttp
@@ -20,9 +22,11 @@ API_BASE = "https://api.lunarx.to/api"
 LUNAR_BASE = "https://lunarx.to"
 
 CACHE_NAMESPACE = "manga_search"
+NOVEL_CACHE_NAMESPACE = "novel_search"
 
 SEARCH_CACHE_TTL = 300
 MANGA_CACHE_TTL = 300
+NOVEL_CACHE_TTL = 300
 
 RESULT_LIMIT = 50
 PAGE_SIZE = 10
@@ -135,6 +139,44 @@ def truncate(
     ] + "..."
 
 
+def slugify(
+    value: str,
+) -> str:
+    value = value.strip().lower()
+
+    value = re.sub(
+        r"[^a-z0-9]+",
+        "-",
+        value,
+    )
+
+    return value.strip("-")
+
+
+def parse_json_field(
+    value,
+    default,
+):
+    if value is None:
+        return default
+
+    if isinstance(
+        value,
+        (list, dict),
+    ):
+        return value
+
+    try:
+        parsed = json.loads(
+            value
+        )
+
+    except (TypeError, ValueError):
+        return default
+
+    return parsed
+
+
 def format_chapter(
     chapter: dict,
 ) -> str:
@@ -179,10 +221,11 @@ def format_chapter(
 
 async def get_cached(
     key: str,
+    namespace: str = CACHE_NAMESPACE,
 ):
     try:
         cached = await db.extensions.get(
-            CACHE_NAMESPACE,
+            namespace,
             key,
             "cache",
         )
@@ -219,10 +262,11 @@ async def set_cached(
     key: str,
     data,
     ttl: int,
+    namespace: str = CACHE_NAMESPACE,
 ):
     try:
         await db.extensions.set(
-            CACHE_NAMESPACE,
+            namespace,
             key,
             "cache",
             {
@@ -358,6 +402,58 @@ async def fetch_manga(
     )
 
     return data
+
+
+async def fetch_novel(
+    slug: str,
+) -> dict | None:
+    """
+    GET /novels/title/{slug}
+
+    Unlike manga, there is no keyword-search endpoint for novels,
+    so the search command resolves whatever the user typed into a
+    slug and fetches it directly.
+    """
+
+    key = cache_key(
+        "novel",
+        slug,
+    )
+
+    cached = await get_cached(
+        key,
+        namespace=NOVEL_CACHE_NAMESPACE,
+    )
+
+    if cached is not None:
+        return cached
+
+    data = await lunar_get(
+        f"/novels/title/"
+        f"{aiohttp.helpers.quote(slug)}"
+    )
+
+    if not data:
+        return None
+
+    novel = data.get(
+        "novel"
+    )
+
+    if not isinstance(
+        novel,
+        dict,
+    ):
+        return None
+
+    await set_cached(
+        key,
+        novel,
+        NOVEL_CACHE_TTL,
+        namespace=NOVEL_CACHE_NAMESPACE,
+    )
+
+    return novel
 
 
 # ============================================================
@@ -686,6 +782,194 @@ def build_stats(
     )
 
 
+def build_novel_info(
+    novel: dict,
+) -> discord.Embed:
+
+    alt_titles = parse_json_field(
+        novel.get(
+            "alternative_titles"
+        ),
+        [],
+    )
+
+    embed = discord.Embed(
+        title=(
+            f"{EMOJI['moon']} "
+            f"{novel.get('title', 'Unknown')}"
+        ),
+        url=(
+            f"{LUNAR_BASE}/novel/"
+            f"{novel.get('slug', '')}"
+        ),
+        description=truncate(
+            str(
+                novel.get(
+                    "description",
+                    "No description",
+                )
+                or "No description"
+            ),
+            350,
+        ),
+        color=resolve_color(
+            novel
+        ),
+    )
+
+    cover_url = novel.get(
+        "cover_url"
+    )
+
+    banner_url = novel.get(
+        "banner_url"
+    )
+
+    if cover_url:
+        embed.set_thumbnail(
+            url=cover_url
+        )
+
+    if banner_url:
+        embed.set_image(
+            url=banner_url
+        )
+
+    embed.add_field(
+        name=f"{EMOJI['question']} Info",
+        value=(
+            f"Author: "
+            f"{novel.get('author', '?')}\n"
+            f"Artist: "
+            f"{novel.get('artist', '?')}\n"
+            f"Status: "
+            f"{novel.get('publication_status', '?')}\n"
+            f"Year: "
+            f"{novel.get('publication_year', '?')}"
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="Rating",
+        value=(
+            f"Rating: "
+            f"{novel.get('rating', '?')}\n"
+            f"Demographic: "
+            f"{novel.get('demographic', '?')}"
+        ),
+        inline=True,
+    )
+
+    embed.add_field(
+        name="Badges",
+        value=(
+            f"{'Official' if novel.get('is_official') else 'Unofficial'}\n"
+            f"{'Premium' if novel.get('is_premium') else 'Free'}"
+        ),
+        inline=True,
+    )
+
+    if alt_titles:
+
+        embed.add_field(
+            name="Alternative Titles",
+            value=truncate(
+                ", ".join(
+                    str(title)
+                    for title in alt_titles
+                ),
+                200,
+            ),
+            inline=False,
+        )
+
+    embed.set_footer(
+        text="Lunar Library • Novel"
+    )
+
+    return embed
+
+
+def build_novel_genres(
+    novel: dict,
+) -> discord.Embed:
+
+    genres = parse_json_field(
+        novel.get("genres"),
+        [],
+    )
+
+    themes = parse_json_field(
+        novel.get("themes"),
+        [],
+    )
+
+    return discord.Embed(
+        title=(
+            f"{EMOJI['moon']} "
+            "Genres & Themes"
+        ),
+        description=(
+            "**Genres**\n"
+            + (
+                ", ".join(
+                    str(genre)
+                    for genre in genres
+                )
+                if genres
+                else "None listed."
+            )
+            + "\n\n**Themes**\n"
+            + (
+                ", ".join(
+                    str(theme)
+                    for theme in themes
+                )
+                if themes
+                else "None listed."
+            )
+        ),
+        color=resolve_color(
+            novel
+        ),
+    )
+
+
+def build_novel_details(
+    novel: dict,
+) -> discord.Embed:
+
+    translated_languages = parse_json_field(
+        novel.get(
+            "translated_languages"
+        ),
+        [],
+    )
+
+    return discord.Embed(
+        title=(
+            f"{EMOJI['moon']} "
+            "Publication Details"
+        ),
+        description=(
+            f"Publisher: "
+            f"{novel.get('publisher') or '?'}\n"
+            f"Serialization: "
+            f"{novel.get('serialization') or '?'}\n"
+            f"Original Language: "
+            f"{novel.get('original_language', '?')}\n"
+            f"Translated Languages: "
+            f"{', '.join(translated_languages) if translated_languages else '?'}\n"
+            f"Translator: "
+            f"{novel.get('tl_username') or '?'}"
+        ),
+        color=resolve_color(
+            novel
+        ),
+    )
+
+
 # ============================================================
 # NAVIGATION VIEW
 # ============================================================
@@ -1010,6 +1294,131 @@ class MangaSearchView(
 
 
 # ============================================================
+# NOVEL NAVIGATION VIEW
+# ============================================================
+
+class NovelNavigationView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        cog: "Search",
+        session_id: str,
+        user_id: int,
+    ):
+
+        super().__init__(
+            timeout=SESSION_TIMEOUT
+        )
+
+        self.cog = cog
+        self.session_id = session_id
+        self.user_id = user_id
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction,
+    ) -> bool:
+
+        if interaction.user.id != self.user_id:
+
+            await interaction.response.send_message(
+                f"{EMOJI['denied']} "
+                "This search menu belongs to another user.",
+                ephemeral=True,
+            )
+
+            return False
+
+        session = get_session(
+            self.session_id
+        )
+
+        if session is None:
+
+            await interaction.response.send_message(
+                f"{EMOJI['denied']} "
+                "This search session has expired.",
+                ephemeral=True,
+            )
+
+            return False
+
+        return True
+
+    @discord.ui.button(
+        label="Info",
+        style=discord.ButtonStyle.primary,
+    )
+    async def info(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        await self.cog.show_novel_info(
+            interaction,
+            self.session_id,
+        )
+
+    @discord.ui.button(
+        label="Genres",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def genres(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        await self.cog.show_novel_genres(
+            interaction,
+            self.session_id,
+        )
+
+    @discord.ui.button(
+        label="Details",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def details(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        await self.cog.show_novel_details(
+            interaction,
+            self.session_id,
+        )
+
+    @discord.ui.button(
+        label="Close",
+        style=discord.ButtonStyle.danger,
+    )
+    async def close(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        delete_session(
+            self.session_id
+        )
+
+        await interaction.response.edit_message(
+            content=(
+                f"{EMOJI['approved']} "
+                "Search closed."
+            ),
+            embed=None,
+            view=None,
+        )
+
+        self.stop()
+
+
+# ============================================================
 # SEARCH COG
 # ============================================================
 
@@ -1185,21 +1594,155 @@ class Search(
         )
 
     # ========================================================
+    # NOVEL NAVIGATION
+    # ========================================================
+
+    async def show_novel_info(
+        self,
+        interaction: discord.Interaction,
+        session_id: str,
+    ):
+
+        session = get_session(
+            session_id
+        )
+
+        if not session:
+            return
+
+        novel = session.get(
+            "novel"
+        )
+
+        if not novel:
+            return
+
+        session["view"] = "novel_info"
+
+        await interaction.response.edit_message(
+            embed=build_novel_info(
+                novel
+            ),
+            view=NovelNavigationView(
+                self,
+                session_id,
+                interaction.user.id,
+            ),
+        )
+
+    async def show_novel_genres(
+        self,
+        interaction: discord.Interaction,
+        session_id: str,
+    ):
+
+        session = get_session(
+            session_id
+        )
+
+        if not session:
+            return
+
+        novel = session.get(
+            "novel"
+        )
+
+        if not novel:
+            return
+
+        session["view"] = "novel_genres"
+
+        await interaction.response.edit_message(
+            embed=build_novel_genres(
+                novel
+            ),
+            view=NovelNavigationView(
+                self,
+                session_id,
+                interaction.user.id,
+            ),
+        )
+
+    async def show_novel_details(
+        self,
+        interaction: discord.Interaction,
+        session_id: str,
+    ):
+
+        session = get_session(
+            session_id
+        )
+
+        if not session:
+            return
+
+        novel = session.get(
+            "novel"
+        )
+
+        if not novel:
+            return
+
+        session["view"] = "novel_details"
+
+        await interaction.response.edit_message(
+            embed=build_novel_details(
+                novel
+            ),
+            view=NovelNavigationView(
+                self,
+                session_id,
+                interaction.user.id,
+            ),
+        )
+
+    # ========================================================
     # /SEARCH
     # ========================================================
 
     @app_commands.command(
         name="search",
-        description="Search the Lunar manga catalog.",
+        description="Search the Lunar library.",
     )
     @app_commands.describe(
-        query="The manga title you want to search for.",
+        query=(
+            "The title (or novel slug) you want to search for."
+        ),
+        category="Manga or Novel. Defaults to Manga.",
+    )
+    @app_commands.choices(
+        category=[
+            app_commands.Choice(
+                name="Manga",
+                value="manga",
+            ),
+            app_commands.Choice(
+                name="Novel",
+                value="novel",
+            ),
+        ]
     )
     async def search(
         self,
         interaction: discord.Interaction,
         query: str,
+        category: app_commands.Choice[str] | None = None,
     ):
+
+        category_value = (
+            category.value
+            if category
+            else "manga"
+        )
+
+        if category_value == "novel":
+
+            await self.search_novel(
+                interaction,
+                query,
+            )
+
+            return
 
         query = query.strip()
 
@@ -1276,6 +1819,111 @@ class Search(
                 session_id,
                 interaction.user.id,
                 results,
+            ),
+        )
+
+    # ========================================================
+    # NOVEL LOOKUP
+    #
+    # There is no keyword-search endpoint for novels, only
+    # GET /novels/title/{slug}, so the query is normalized into
+    # a slug and fetched directly instead of returning a list.
+    # ========================================================
+
+    async def search_novel(
+        self,
+        interaction: discord.Interaction,
+        query: str,
+    ):
+
+        query = query.strip()
+
+        if not query:
+
+            await interaction.response.send_message(
+                f"{EMOJI['question']} "
+                "Please provide a novel title or slug "
+                "to search for.",
+                ephemeral=True,
+            )
+
+            return
+
+        if len(query) > 100:
+
+            await interaction.response.send_message(
+                f"{EMOJI['denied']} "
+                "Search queries cannot exceed 100 characters.",
+                ephemeral=True,
+            )
+
+            return
+
+        await interaction.response.defer()
+
+        await interaction.edit_original_response(
+            content=(
+                f"{EMOJI['loading']} "
+                "Looking up novel..."
+            ),
+        )
+
+        slug = slugify(
+            query
+        )
+
+        if not slug:
+
+            await interaction.edit_original_response(
+                content=(
+                    f"{EMOJI['denied']} "
+                    f"No novel found for **{query}**."
+                ),
+            )
+
+            return
+
+        novel = await fetch_novel(
+            slug
+        )
+
+        if not novel:
+
+            await interaction.edit_original_response(
+                content=(
+                    f"{EMOJI['denied']} "
+                    f"No novel found for **{query}**."
+                ),
+            )
+
+            return
+
+        session_id = str(
+            interaction.id
+        )
+
+        set_session(
+            session_id,
+            {
+                "user_id": interaction.user.id,
+                "query": query,
+                "novel": novel,
+                "view": "novel_info",
+            },
+        )
+
+        await interaction.edit_original_response(
+            content=(
+                f"{EMOJI['approved']} "
+                "Novel loaded."
+            ),
+            embed=build_novel_info(
+                novel
+            ),
+            view=NovelNavigationView(
+                self,
+                session_id,
+                interaction.user.id,
             ),
         )
 

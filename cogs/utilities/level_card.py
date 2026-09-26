@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import aiohttp
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 
 
 log = logging.getLogger("lunar.level_card")
@@ -16,19 +16,11 @@ log = logging.getLogger("lunar.level_card")
 # LUNAR ASSETS
 # ==============================================================
 
-LUNAR_PANEL_URL = (
-                    "https://vault.lunarx.to/cdn/admin/manga/migrated/5f809d70-11db-4b58-957d-8e353650ef35.png"
-)
+LUNAR_PANEL_URL = "https://files.catbox.moe/uzo9ul.png"
 
-LUNAR_LOGO_DESIGN_1_URL = (
-    "https://vault.lunarx.to/cdn/admin/manga/migrated/"
-    "33c739ea-0ec7-4971-a1c0-962f8cc7234b.png"
-)
+LUNAR_LOGO_DESIGN_1_URL = "https://files.catbox.moe/3evm1x.jpg"
 
-LUNAR_LOGO_MAIN_URL = (
-    "https://vault.lunarx.to/cdn/admin/manga/migrated/"
-    "5a9015dc-1bd5-435b-adab-9912387ee9a5.png"
-)
+LUNAR_LOGO_MAIN_URL = "https://files.catbox.moe/83e2wf.png"
 
 
 # ==============================================================
@@ -197,6 +189,90 @@ async def _download_image(
     finally:
         if owned_session and session:
             await session.close()
+
+
+def _key_out_black(
+    image: Image.Image,
+    *,
+    low: int = 4,
+    high: int = 60,
+) -> Image.Image:
+    """
+    Turns a flattened black background transparent.
+
+    Some source art (e.g. a logo exported as a JPEG) has no real
+    alpha channel, just a solid black backdrop behind a glowing
+    design. Treating pure black as "empty" and ramping opacity in
+    from `low` to `high` keys the background out cleanly while
+    keeping the glow's soft anti-aliased edges intact, instead of
+    leaving a hard-edged black square behind the artwork.
+    """
+
+    image = image.convert("RGBA")
+
+    red, green, blue, alpha = image.split()
+
+    brightness = ImageChops.lighter(
+        ImageChops.lighter(
+            red,
+            green,
+        ),
+        blue,
+    )
+
+    curve = [
+        (
+            0
+            if value <= low
+            else (
+                255
+                if value >= high
+                else int(
+                    (value - low)
+                    / (high - low)
+                    * 255
+                )
+            )
+        )
+        for value in range(256)
+    ]
+
+    keyed_alpha = brightness.point(
+        curve
+    )
+
+    # Respect any pre-existing transparency too.
+    combined_alpha = ImageChops.darker(
+        keyed_alpha,
+        alpha,
+    )
+
+    image.putalpha(
+        combined_alpha
+    )
+
+    return image
+
+
+async def _load_logo_design(
+    session: Optional[aiohttp.ClientSession],
+) -> Optional[Image.Image]:
+    """
+    Downloads the Lunar "logo design" mark and strips its flattened
+    black background so it composites cleanly onto the card.
+    """
+
+    logo = await _download_image(
+        LUNAR_LOGO_DESIGN_1_URL,
+        session,
+    )
+
+    if logo is None:
+        return None
+
+    return _key_out_black(
+        logo
+    )
 
 
 def _paste_cover(
@@ -790,9 +866,8 @@ async def render_lunar_level_card(
         session,
     )
 
-    logo = await _download_image(
-        LUNAR_LOGO_DESIGN_1_URL,
-        session,
+    logo = await _load_logo_design(
+        session
     )
 
     avatar = await _download_image(

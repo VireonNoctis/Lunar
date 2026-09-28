@@ -13,7 +13,7 @@ from discord.ext import commands
 from cogs.utilities.database import db
 from cogs.utilities.emoji import EMOJI
 from cogs.utilities.randomizer import CryptographicRandomizer
-from cogs.utilities import lunarapi
+from cogs.utilities.lunarapi import lunarapi
 
 
 # ============================================================

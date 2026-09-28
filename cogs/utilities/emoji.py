@@ -73,7 +73,7 @@ EMOJI = MappingProxyType({
     # Reactions
     # ─────────────────────────────
     "thumbsup": "<:like:1550505388024266753>",
-    "thumbdown": "<:dislike:1550505391216140358>,
+    "thumbdown": "<:dislike:1550505391216140358>",
 
     # ─────────────────────────────
     # Rating Stars

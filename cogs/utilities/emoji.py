@@ -4,85 +4,92 @@ EMOJI = MappingProxyType({
     # ─────────────────────────────
     # Moderation
     # ─────────────────────────────
-    "hammer": "<:Modhammer:1517573534061170868>",
-    "verify": "<a:Verify:1517572452081729667>",
-    "gemlock": "<:Gemlock:1527671482841436161>",
+    "hammer": "<a:hammer:1554115982006550679>",
+    "verify": "<a:verify:1554115135201738802>",
+    "gemlock": "<:gemlock:1550506895838810304>",
 
     # ─────────────────────────────
     # General
     # ─────────────────────────────
-    "approved": "<:Approved:1517572719623930016>",
-    "denied": "<:Denied:1517572662279274710>",
-    "error": "<:Error:1517572590225461421>",
-    "question": "<:Question:1517572535393190121>",
-    "loading": "<a:Loading:1517569264817672412>",
-    "gift": "<:gift:1544647572805652663>",
-    "dcloading": "<a:dcloading:154792865827514458>",
+    "approved": "<a:approved:1554117244747915365>",
+    "denied": "<a:rejectdecline:1554117241266634802>",
+    "error": "<:error:1554117850074193940>",
+    "question": "<a:question:1554118169612914708>",
+    "loading": "<a:mainloading:1554114570631651358>", #main loading for Bot.
+    "gift": "<a:gift1:1554106075899232277>",
+    "gift1": "<:gift:1551221177832181791>",
+    "dcloading": "<a:discordloading:1550505642580770947>",
+    "soldout"; "<a:soldout:1554118944040947732>", # For gacha Cards that are x/x mints and other stuff.
     # ─────────────────────────────
     # Staff
     # ─────────────────────────────
-    "staff": "<:Staff:1520891667136254105>",
-    "dev": "<:Developer:1527010893483872357>",
+    "staff": "<:Staff:1550505639862870168>",
+    "dev": "<:Developer:1550506871826284644>",
 
     # ─────────────────────────────
     # Branding
     # ─────────────────────────────
-    "moon": "<:Moon:1517573475496362267>",
-    "lunar": "<:Lunar:1527008583953289369>", # Main Brand Emoji.
+    "moon": "<:moon:1554114955874406410>",
+    "lunar": "<:Lunar:1550506869557174365>", # Main Brand Emoji.
+    "crown": "<a:crown:1554107984433385522>", # Can Be used for Giveaway Winners and Owners.
+    "Owner": "<a:Owner:1550461325426036797>", # Bot Owner.
+    "Donator": "<a:Donator:1550461328529817671>", # Website and Server Donor/Donators.
+    "Live": "<a:live:1554123191016890398>", # If Bot is Live.
 
     # ─────────────────────────────
     # Decorative
     # ─────────────────────────────
-    "new1": "<:new1:1527005146188349492>",
-    "new2": "<:new2:1527005092660904147>",
-    "update3": "<:update3:1547929326761017474>",
-    "update2": "<:update2:1547929273648681101>",
-    "update1": "<:update1:1547929218619547720>",
+    "new1": "<:new1:1554107110571380778>",
+    "new2": "<:new2:1554107113532432434>",
+    "update3": "<:update3:1550505619881074688>",
+    "update2": "<:update2:1550505614604509345>",
+    "update1": "<:update1:1550505611630870651>",
 # All Emojis. Above Must be Placed Together in order (1,2,3) With NO Space.
-    "aniheart": "<a:aniheart:1527671771111886989>",
+    "aniheart": "<a:animatedheart:1554114370919989429>",
 
     # ─────────────────────────────
     # Music
     # ─────────────────────────────
-    "spotify": "<a:spotify:1545708859442724864>",
-    "YtMusic": "<:ytmusic:1545710636095373362>",
-    "Soundcloud": "<:soundcloud:1545705529639174215>",
+    "spotify": "<:spotify:1554123193692721284>",
+    "YtMusic": "<:youtube:1554123196188336240>",
+    "Soundcloud": "<:soundcloud:1554123188210901024>",
 
     # ─────────────────────────────
     # Navigation
     # ─────────────────────────────
-    "right": "<a:pointright:1527005041679143034>",
-    "left": "<a:pointleft:1527004977933848770>",
+    "right": "<a:right:1550505381736878151>",
+    "left": "<a:left:1550505385167691786>",
 
     # ─────────────────────────────
     # Reactions
     # ─────────────────────────────
-    "thumbsup": "<:thumbsup:1527004918718660798>",
-    "thumbdown": "<:thumbsdown:1527004837093314612>",
+    "thumbsup": "<:like:1550505388024266753>",
+    "thumbdown": "<:dislike:1550505391216140358>,
 
     # ─────────────────────────────
     # Rating Stars
     # ─────────────────────────────
-    "yellowstar": "<:yellowstar:1527671893279117482>",
-    "greenstar": "<:greenstar:1527672435858477139>",
-    "cyanstar": "<:cyanstar:1527672593006596277>",
-    "purplestar": "<:purplestar:1527672060606681268>",
-    "pinkstar": "<:pinkstar:1527672153053593663>",
-    "redstar": "<:redstar:1527671984127869038>",
-    "orangestar": "<:orangestar:1527672340077478009>",
+    "yellowstar": "<:yellowstar:1550506893607440404>",
+    "greenstar": "<:greenstar:1550506879006806186>",
+    "cyanstar": "<:cyanstar:1550506874024099890>",
+    "purplestar": "<:purplestar:1550506888859484200>",
+    "pinkstar": "<:pinkstar:1550506883700367410>",
+    "redstar": "<:redstar:1550506891275280534>",
+    "orangestar": "<:orangestar:1550506881502412800>",
 
     # ─────────────────────────────
     # System / Bot
     # ─────────────────────────────
-    "diagnostics": "<:Diagnostics:1547962042906968134>",
-    "cache": "<:Cache:1547961938649157642>",
-    "gateway": "<:gateway:1547961835959881828>",
-    "maintenance": "<:maintenance:1547932739779428392>",
-    "commands": "<:commands:1547932686323155044>",
-    "logs": "<:logs:1547932584472748113>",
-    "health": "<:health:1547930572884672572>",
-    "system": "<:system:1547929388857954304>",
-    "eval": "<:eval:1547929165632766003>",
-    "security": "<:Secure:1547928851278200832>",
-    "db": "<:db:1547928549925851177>",
+    "diagnostics": "<:diagnostic:1550506886061756496>",
+    "cache": "<:cache:1550505661446750208>",
+    "gateway": "<:gateaway:1554120517936611468>",
+    "maintenance": "<:maintenance:1550505606475944008>",
+    "commands": "<:Commands:1550505608871018686>",
+    "logs": "<:logs:1550505601778589827>",
+    "health": "<:health:1550505604278259712>",
+    "system": "<:system:1550505647722864750>",
+    "eval": "<:eval:1550505622884065350>",
+    "security": "<:security:1554120727052034048>",
+    "db": "<:Database:1550505644786974911>",
+    "dberror": "<:databaseerror:1554118172548796483>",
 })

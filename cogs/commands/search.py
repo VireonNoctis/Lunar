@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-import time
+import asyncio
+import re
+from typing import Optional
 
 import aiohttp
 import discord
@@ -10,820 +12,719 @@ from discord.ext import commands
 
 from cogs.utilities.database import db
 from cogs.utilities.emoji import EMOJI
-from cogs.utilities.lunarapi import lunarapi
+from cogs.utilities.randomizer import CryptographicRandomizer
+from cogs.utilities import lunarapi
 
 
 # ============================================================
-# CONSTANTS
+# CONFIG
 # ============================================================
 
-LUNAR_BASE = "https://lunarx.to"
+LUNAR_PROFILE_ENDPOINT = "/api/animes/profile"
+ANILIST_API = "https://graphql.anilist.co"
 
-CACHE_NAMESPACE = "manga_search"
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(
+    total=15,
+    connect=5,
+    sock_connect=5,
+    sock_read=10,
+)
 
-SEARCH_CACHE_TTL = 300
-MANGA_CACHE_TTL = 300
-
-RESULT_LIMIT = 50
-PAGE_SIZE = 10
-
-SESSION_TIMEOUT = 60
-
-
-# ============================================================
-# MEMORY SESSION
-# ============================================================
-
-_sessions: dict[str, dict] = {}
+LOADING_TIME = 2.5
 
 
 # ============================================================
-# HELPERS
+# ANILIST QUERIES
 # ============================================================
 
-def cache_key(prefix: str, value: str) -> str:
-    return f"{prefix}:{value.lower().strip()}"
+RANDOM_ANIME_QUERY = """
+query {
+    Page(page: 1, perPage: 50) {
+        media(type: ANIME, sort: RANDOM, isAdult: false) {
+            id
+            title {
+                romaji
+                english
+                native
+            }
+            description(asHtml: false)
+            episodes
+            duration
+            status
+            averageScore
+            genres
+            coverImage {
+                large
+            }
+            siteUrl
+        }
+    }
+}
+"""
+
+RECOMMENDATION_QUERY = """
+query ($id: Int!) {
+    Media(id: $id, type: ANIME) {
+        id
+        recommendations(sort: RATING_DESC, perPage: 25) {
+            nodes {
+                mediaRecommendation {
+                    id
+                    title {
+                        romaji
+                        english
+                        native
+                    }
+                    description(asHtml: false)
+                    episodes
+                    duration
+                    status
+                    averageScore
+                    genres
+                    coverImage {
+                        large
+                    }
+                    siteUrl
+                }
+            }
+        }
+    }
+}
+"""
 
 
-def utc_timestamp() -> int:
-    return int(time.time())
+# ============================================================
+# TEXT HELPERS
+# ============================================================
 
-
-def parse_color(value: str | None) -> int | None:
+def clean_text(value: Optional[str]) -> str:
     if not value:
-        return None
+        return ""
 
-    value = value.strip()
-
-    if value.startswith("#"):
-        value = value[1:]
-
-    if len(value) != 6:
-        return None
-
-    try:
-        return int(value, 16)
-    except ValueError:
-        return None
+    value = re.sub(r"<[^>]+>", "", value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip()
 
 
-def gradient_fallback(title: str) -> int:
-    hash_value = 0
+def get_title(anime: dict) -> str:
+    title = anime.get("title", {})
 
-    for char in title:
-        hash_value = (hash_value * 31 + ord(char)) & 0xFFFFFFFF
-
-    colors = (
-        0x8B5CF6,
-        0x3B82F6,
-        0x10B981,
-        0xF59E0B,
-        0xEF4444,
+    return (
+        title.get("english")
+        or title.get("romaji")
+        or title.get("native")
+        or "Unknown Anime"
     )
 
-    return colors[hash_value % len(colors)]
 
+def get_url(anime: dict) -> str:
+    anime_id = anime.get("id")
 
-def resolve_color(manga: dict) -> int:
-    theme = manga.get("theme_color") or manga.get("themecolor")
-    parsed = parse_color(theme)
-
-    if parsed is not None:
-        return parsed
-
-    return gradient_fallback(manga.get("title", "lunar"))
-
-
-def truncate(value: str, length: int) -> str:
-    if len(value) <= length:
-        return value
-
-    return value[: length - 3] + "..."
-
-
-def format_chapter(chapter: dict) -> str:
-    chapter_number = chapter.get("chapter_number", "?")
-    uploaded_at = chapter.get("uploaded_at")
-
-    if uploaded_at:
-        try:
-            parsed = discord.utils.parse_time(uploaded_at)
-
-            if parsed:
-                timestamp = int(parsed.timestamp())
-                return f"Ch {chapter_number} • <t:{timestamp}:R>"
-        except (ValueError, TypeError):
-            pass
-
-    return f"Ch {chapter_number}"
+    return (
+        anime.get("siteUrl")
+        or f"https://anilist.co/anime/{anime_id}"
+    )
 
 
 # ============================================================
-# DATABASE CACHE
+# ANIME EMBED
 # ============================================================
 
-async def get_cached(key: str):
+def build_anime_embed(
+    anime: dict,
+    *,
+    heading: str,
+    color: discord.Color,
+) -> discord.Embed:
+    description = clean_text(anime.get("description"))
+
+    if len(description) > 700:
+        description = description[:697] + "..."
+
+    if not description:
+        description = "No description available."
+
+    embed = discord.Embed(
+        title=f"{heading} {get_title(anime)}",
+        url=get_url(anime),
+        description=description,
+        color=color,
+    )
+
+    cover = anime.get("coverImage", {}).get("large")
+
+    if cover:
+        embed.set_thumbnail(url=cover)
+
+    score = anime.get("averageScore")
+    score_text = f"{score}/100" if score is not None else "N/A"
+    episodes = anime.get("episodes") or "?"
+    duration = anime.get("duration") or "?"
+    status = anime.get("status") or "UNKNOWN"
+    genres = anime.get("genres") or []
+    genre_text = ", ".join(genres[:5]) if genres else "Unknown"
+
+    embed.add_field(
+        name="Information",
+        value=(
+            f"**Episodes:** `{episodes}`\n"
+            f"**Duration:** `{duration} min`\n"
+            f"**Status:** `{status}`\n"
+            f"**Score:** `{score_text}`"
+        ),
+        inline=True,
+    )
+
+    embed.add_field(
+        name="Genres",
+        value=genre_text,
+        inline=True,
+    )
+
+    # Footer uses only the moon emoji.
+    embed.set_footer(
+        text=f"{EMOJI['moon']} Lunar Anime • Powered by AniList"
+    )
+
+    return embed
+
+
+# ============================================================
+# HTTP
+# ============================================================
+
+async def anilist_request(
+    session: aiohttp.ClientSession,
+    query: str,
+    variables: Optional[dict] = None,
+) -> Optional[dict]:
     try:
-        cached = await db.extensions.get(
-            CACHE_NAMESPACE,
-            key,
-            "cache",
-        )
-    except Exception:
-        return None
-
-    if not cached:
-        return None
-
-    expires_at = cached.get("expires_at")
-
-    if expires_at is not None:
-        try:
-            if int(expires_at) < utc_timestamp():
-                return None
-        except (TypeError, ValueError):
-            return None
-
-    return cached.get("data")
-
-
-async def set_cached(key: str, data, ttl: int):
-    try:
-        await db.extensions.set(
-            CACHE_NAMESPACE,
-            key,
-            "cache",
-            {
-                "expires_at": utc_timestamp() + ttl,
-                "data": data,
+        async with session.post(
+            ANILIST_API,
+            json={
+                "query": query,
+                "variables": variables or {},
             },
-        )
-    except Exception:
-        pass
+        ) as response:
+            if response.status != 200:
+                return None
+
+            payload = await response.json()
+
+            if payload.get("errors"):
+                return None
+
+            data = payload.get("data")
+            return data if isinstance(data, dict) else None
+
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        return None
 
 
-# ============================================================
-# LUNAR API
-# ============================================================
-
-async def lunar_get(endpoint: str) -> dict | None:
+async def fetch_lunar_profile(username: str) -> Optional[dict]:
     try:
-        result = await lunarapi.get(endpoint, authed=False)
+        payload = await lunarapi.get(
+            LUNAR_PROFILE_ENDPOINT,
+            authed=False,
+            params={"username": username},
+        )
     except lunarapi.LunarAPIError:
         return None
 
-    return result if isinstance(result, dict) else None
-
-
-async def search_manga(query: str) -> list[dict]:
-    key = cache_key("search", query)
-    cached = await get_cached(key)
-
-    if cached is not None:
-        return cached
-
-    data = await lunar_get(
-        f"/api/manga/search?q={aiohttp.helpers.quote(query)}"
-    )
-
-    if not data:
-        return []
-
-    results = data.get("manga", [])
-
-    if not isinstance(results, list):
-        return []
-
-    results = results[:RESULT_LIMIT]
-    await set_cached(key, results, SEARCH_CACHE_TTL)
-
-    return results
-
-
-async def fetch_manga(slug: str) -> dict | None:
-    key = cache_key("manga", slug)
-    cached = await get_cached(key)
-
-    if cached is not None:
-        return cached
-
-    data = await lunar_get(
-        f"/api/manga/{aiohttp.helpers.quote(slug)}"
-    )
-
-    if not data:
+    if not isinstance(payload, dict):
         return None
 
-    await set_cached(key, data, MANGA_CACHE_TTL)
-    return data
+    profile = payload.get("data")
+    return profile if isinstance(profile, dict) else None
 
 
 # ============================================================
-# SESSION
+# DATABASE
 # ============================================================
 
-def set_session(session_id: str, data: dict):
-    _sessions[session_id] = {
-        **data,
-        "expires_at": utc_timestamp() + SESSION_TIMEOUT,
-    }
-
-
-def get_session(session_id: str) -> dict | None:
-    session = _sessions.get(session_id)
-
-    if not session:
+async def get_linked_username(user_id: int) -> Optional[str]:
+    try:
+        return await db.account_links.get_username(str(user_id))
+    except Exception:
         return None
 
-    if session["expires_at"] < utc_timestamp():
-        _sessions.pop(session_id, None)
+
+# ============================================================
+# WATCHLIST
+# ============================================================
+
+def extract_anime_ids(value) -> set[int]:
+    found: set[int] = set()
+
+    def walk(current):
+        if isinstance(current, dict):
+            for key in (
+                "animeId",
+                "anime_id",
+                "mediaId",
+                "media_id",
+                "anilistId",
+                "anilist_id",
+            ):
+                candidate = current.get(key)
+
+                if isinstance(candidate, int):
+                    found.add(candidate)
+                elif isinstance(candidate, str) and candidate.isdigit():
+                    found.add(int(candidate))
+
+            if current.get("type") == "ANIME":
+                anime_id = current.get("id")
+
+                if isinstance(anime_id, int):
+                    found.add(anime_id)
+                elif isinstance(anime_id, str) and anime_id.isdigit():
+                    found.add(int(anime_id))
+
+            for child in current.values():
+                walk(child)
+
+        elif isinstance(current, list):
+            for child in current:
+                walk(child)
+
+    walk(value)
+    return found
+
+
+def extract_watchlist_ids(profile: dict) -> set[int]:
+    anilist_profile = profile.get("anilist_profile")
+
+    if not anilist_profile:
+        return set()
+
+    if isinstance(anilist_profile, dict):
+        preferred = (
+            "watchlist",
+            "watch_list",
+            "anime_watchlist",
+            "media",
+            "lists",
+            "entries",
+        )
+
+        for key in preferred:
+            value = anilist_profile.get(key)
+
+            if value:
+                ids = extract_anime_ids(value)
+
+                if ids:
+                    return ids
+
+    return extract_anime_ids(anilist_profile)
+
+
+# ============================================================
+# RANDOM ANIME
+# ============================================================
+
+async def get_random_anime() -> Optional[dict]:
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
+        data = await anilist_request(session, RANDOM_ANIME_QUERY)
+
+        if not data:
+            return None
+
+        media = data.get("Page", {}).get("media", [])
+        media = [anime for anime in media if anime.get("id") is not None]
+
+        if not media:
+            return None
+
+        anime_ids = [str(anime["id"]) for anime in media]
+        selection = CryptographicRandomizer.select(
+            anime_ids,
+            1,
+            context="anime.random",
+        )
+        selected_id = int(selection.winners[0])
+
+        return next(
+            (anime for anime in media if anime.get("id") == selected_id),
+            None,
+        )
+
+
+# ============================================================
+# RECOMMENDATION ENGINE
+# ============================================================
+
+async def get_recommendation(
+    watchlist_ids: set[int],
+) -> Optional[dict]:
+    if not watchlist_ids:
         return None
 
-    session["expires_at"] = utc_timestamp() + SESSION_TIMEOUT
-    return session
+    seed_ids = list(watchlist_ids)
+    seed_count = min(5, len(seed_ids))
 
-
-def delete_session(session_id: str):
-    _sessions.pop(session_id, None)
-
-
-# ============================================================
-# EMBEDS
-# ============================================================
-
-def build_home(
-    results: list[dict],
-    query: str,
-    page: int = 0,
-) -> discord.Embed:
-    start = page * PAGE_SIZE
-    end = start + PAGE_SIZE
-    visible = results[start:end]
-
-    embed = discord.Embed(
-        title=f"{EMOJI['lunar']} Lunar Catalog",
-        description=(
-            f"Search: **{query}**\n"
-            f"Results: **{len(results)}**\n\n"
-            "Select a title below."
-        ),
-        color=0x8B5CF6,
+    seed_selection = CryptographicRandomizer.select(
+        [str(anime_id) for anime_id in seed_ids],
+        seed_count,
+        context="anime.rec.seeds",
     )
 
-    if visible:
-        lines = []
+    selected_seeds = [int(value) for value in seed_selection.winners]
+    candidates: dict[int, dict] = {}
 
-        for index, manga in enumerate(visible, start=start + 1):
-            title = truncate(
-                str(manga.get("title", "Unknown")),
-                80,
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
+        for seed_id in selected_seeds:
+            data = await anilist_request(
+                session,
+                RECOMMENDATION_QUERY,
+                {"id": seed_id},
             )
-            lines.append(f"`{index:02}` {title}")
 
-        embed.add_field(
-            name=f"{EMOJI['lunar']} Titles",
-            value="\n".join(lines),
-            inline=False,
-        )
-
-    embed.set_footer(
-        text=(
-            f"{EMOJI['moon']} Page {page + 1} • "
-            f"{min(end, len(results))}/{len(results)}"
-        )
-    )
-
-    return embed
-
-
-def build_info(manga: dict, chapters: list[dict]) -> discord.Embed:
-    latest = chapters[0] if chapters else {}
-    uploader = latest.get("uploader_profile") or {}
-
-    embed = discord.Embed(
-        title=f"{EMOJI['lunar']} {manga.get('title', 'Unknown')}",
-        url=f"{LUNAR_BASE}/manga/{manga.get('slug', '')}",
-        description=truncate(
-            str(
-                manga.get("description", "No description")
-                or "No description"
-            ),
-            350,
-        ),
-        color=resolve_color(manga),
-    )
-
-    cover_url = manga.get("cover_url")
-    banner_url = manga.get("banner_url")
-
-    if cover_url:
-        embed.set_thumbnail(url=cover_url)
-
-    if banner_url:
-        embed.set_image(url=banner_url)
-
-    embed.add_field(
-        name=f"{EMOJI['question']} Info",
-        value=(
-            f"Author: {manga.get('author', '?')}\n"
-            f"Artist: {manga.get('artist', '?')}\n"
-            f"Status: {manga.get('publication_status', '?')}\n"
-            f"Year: {manga.get('publication_year', '?')}"
-        ),
-        inline=False,
-    )
-
-    embed.add_field(
-        name="Stats",
-        value=(
-            f"Chapters: {len(chapters)}\n"
-            f"Rating: {manga.get('rating', '?')}"
-        ),
-        inline=True,
-    )
-
-    embed.add_field(
-        name="Uploader",
-        value=(
-            f"User: {uploader.get('username', '?')}\n"
-            f"Level: {uploader.get('level', '?')}"
-        ),
-        inline=True,
-    )
-
-    embed.set_footer(text=EMOJI["moon"])
-    return embed
-
-
-def build_chapters(
-    manga: dict,
-    chapters: list[dict],
-    page: int = 0,
-) -> discord.Embed:
-    visible = chapters[page * PAGE_SIZE : page * PAGE_SIZE + PAGE_SIZE]
-
-    embed = discord.Embed(
-        title=f"{EMOJI['lunar']} Chapters",
-        description=(
-            "\n".join(format_chapter(chapter) for chapter in visible)
-            if visible
-            else "No chapters available."
-        ),
-        color=resolve_color(manga),
-    )
-
-    embed.set_footer(
-        text=(
-            f"{EMOJI['moon']} Page {page + 1} • "
-            f"{len(chapters)} total chapters"
-        )
-    )
-
-    return embed
-
-
-def build_languages(manga: dict, chapters: list[dict]) -> discord.Embed:
-    languages = sorted(
-        {
-            str(chapter.get("language", "Unknown"))
-            for chapter in chapters
-        }
-    )
-
-    embed = discord.Embed(
-        title=f"{EMOJI['lunar']} Languages",
-        description=(
-            ", ".join(languages)
-            if languages
-            else "No languages available."
-        ),
-        color=resolve_color(manga),
-    )
-    embed.set_footer(text=EMOJI["moon"])
-
-    return embed
-
-
-def build_stats(manga: dict, chapters: list[dict]) -> discord.Embed:
-    embed = discord.Embed(
-        title=f"{EMOJI['lunar']} Stats",
-        description=(
-            f"Rating: {manga.get('rating', '?')}\n"
-            f"Status: {manga.get('publication_status', '?')}\n"
-            f"Year: {manga.get('publication_year', '?')}\n"
-            f"Chapters: {len(chapters)}"
-        ),
-        color=resolve_color(manga),
-    )
-    embed.set_footer(text=EMOJI["moon"])
-
-    return embed
-
-
-# ============================================================
-# NAVIGATION VIEW
-# ============================================================
-
-class MangaNavigationView(discord.ui.View):
-    def __init__(
-        self,
-        cog: "Search",
-        session_id: str,
-        user_id: int,
-    ):
-        super().__init__(timeout=SESSION_TIMEOUT)
-        self.cog = cog
-        self.session_id = session_id
-        self.user_id = user_id
-
-    async def interaction_check(
-        self,
-        interaction: discord.Interaction,
-    ) -> bool:
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                f"{EMOJI['denied']} This search menu belongs to another user.",
-                ephemeral=True,
-            )
-            return False
-
-        if get_session(self.session_id) is None:
-            await interaction.response.send_message(
-                f"{EMOJI['denied']} This search session has expired.",
-                ephemeral=True,
-            )
-            return False
-
-        return True
-
-    @discord.ui.button(
-        label="Info",
-        style=discord.ButtonStyle.primary,
-    )
-    async def info(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
-        await self.cog.show_info(interaction, self.session_id)
-
-    @discord.ui.button(
-        label="Chapters",
-        style=discord.ButtonStyle.secondary,
-    )
-    async def chapters(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
-        await self.cog.show_chapters(interaction, self.session_id)
-
-    @discord.ui.button(
-        label="Languages",
-        style=discord.ButtonStyle.secondary,
-    )
-    async def languages(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
-        await self.cog.show_languages(interaction, self.session_id)
-
-    @discord.ui.button(
-        label="Stats",
-        style=discord.ButtonStyle.secondary,
-    )
-    async def stats(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
-        await self.cog.show_stats(interaction, self.session_id)
-
-    @discord.ui.button(
-        label="Close",
-        style=discord.ButtonStyle.danger,
-    )
-    async def close(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
-        delete_session(self.session_id)
-
-        await interaction.response.edit_message(
-            content=f"{EMOJI['approved']} Search closed.",
-            embed=None,
-            view=None,
-        )
-
-        self.stop()
-
-
-# ============================================================
-# SEARCH SELECT
-# ============================================================
-
-class MangaSelect(discord.ui.Select):
-    def __init__(
-        self,
-        cog: "Search",
-        session_id: str,
-        user_id: int,
-        results: list[dict],
-        page: int,
-    ):
-        self.cog = cog
-        self.session_id = session_id
-        self.user_id = user_id
-
-        start = page * PAGE_SIZE
-        visible = results[start : start + PAGE_SIZE]
-        options = []
-
-        for manga in visible:
-            title = str(manga.get("title", "Unknown"))
-            slug = str(manga.get("slug", ""))
-
-            if not slug:
+            if not data:
                 continue
 
-            options.append(
-                discord.SelectOption(
-                    label=truncate(title, 100),
-                    value=slug,
-                )
+            media = data.get("Media")
+
+            if not media:
+                continue
+
+            nodes = (
+                media.get("recommendations", {})
+                .get("nodes", [])
             )
 
-        super().__init__(
-            placeholder="Choose a manga...",
-            options=options,
-            custom_id=f"manga_select:{session_id}",
-        )
+            for node in nodes:
+                anime = node.get("mediaRecommendation")
 
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                f"{EMOJI['denied']} This search menu belongs to another user.",
-                ephemeral=True,
-            )
-            return
+                if not anime:
+                    continue
 
-        session = get_session(self.session_id)
+                anime_id = anime.get("id")
 
-        if session is None:
-            await interaction.response.send_message(
-                f"{EMOJI['denied']} This search session has expired.",
-                ephemeral=True,
-            )
-            return
+                if not anime_id or anime_id in watchlist_ids:
+                    continue
 
-        slug = self.values[0]
-        await interaction.response.defer()
+                candidates[anime_id] = anime
 
-        manga = await fetch_manga(slug)
+    if not candidates:
+        return None
 
-        if not manga:
-            await interaction.followup.send(
-                f"{EMOJI['error']} Failed to load that manga.",
-                ephemeral=True,
-            )
-            return
+    ranked = sorted(
+        candidates.values(),
+        key=lambda anime: anime.get("averageScore") or 0,
+        reverse=True,
+    )
+    top_candidates = ranked[: min(10, len(ranked))]
 
-        chapters = manga.get("data", [])
+    if not top_candidates:
+        return None
 
-        if not isinstance(chapters, list):
-            chapters = []
+    selected = CryptographicRandomizer.select(
+        [str(anime["id"]) for anime in top_candidates],
+        1,
+        context="anime.rec.result",
+    )
+    selected_id = int(selected.winners[0])
 
-        set_session(
-            self.session_id,
-            {
-                "user_id": self.user_id,
-                "manga": manga,
-                "chapters": chapters,
-                "view": "info",
-            },
-        )
-
-        await interaction.edit_original_response(
-            content=f"{EMOJI['approved']} Manga loaded.",
-            embed=build_info(manga, chapters),
-            view=MangaNavigationView(
-                self.cog,
-                self.session_id,
-                self.user_id,
-            ),
-        )
+    return next(
+        (anime for anime in top_candidates if anime.get("id") == selected_id),
+        None,
+    )
 
 
-class MangaSearchView(discord.ui.View):
-    def __init__(
+# ============================================================
+# MODE SELECTION VIEW
+# ============================================================
+
+class AnimeModeView(discord.ui.View):
+    def __init__(self, cog: "Anime"):
+        super().__init__(timeout=60)
+        self.cog = cog
+
+    @discord.ui.button(
+        label="Recommendation",
+        style=discord.ButtonStyle.primary,
+        emoji="💜",
+    )
+    async def recommendation(
         self,
-        cog: "Search",
-        session_id: str,
-        user_id: int,
-        results: list[dict],
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
     ):
-        super().__init__(timeout=SESSION_TIMEOUT)
-        self.add_item(
-            MangaSelect(
-                cog,
-                session_id,
-                user_id,
-                results,
-                0,
-            )
-        )
+        await self.cog.run_recommendation(interaction)
+
+    @discord.ui.button(
+        label="Random Anime",
+        style=discord.ButtonStyle.secondary,
+        emoji=EMOJI["dice"],
+    )
+    async def random(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await self.cog.run_random(interaction)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
 
 
 # ============================================================
-# SEARCH COG
+# ANIME COG
 # ============================================================
 
-class Search(commands.Cog):
+class Anime(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     # ========================================================
-    # NAVIGATION
-    # ========================================================
-
-    async def show_info(
-        self,
-        interaction: discord.Interaction,
-        session_id: str,
-    ):
-        session = get_session(session_id)
-
-        if not session:
-            return
-
-        manga = session.get("manga")
-        chapters = session.get("chapters", [])
-
-        if not manga:
-            return
-
-        session["view"] = "info"
-
-        await interaction.response.edit_message(
-            embed=build_info(manga, chapters),
-            view=MangaNavigationView(
-                self,
-                session_id,
-                interaction.user.id,
-            ),
-        )
-
-    async def show_chapters(
-        self,
-        interaction: discord.Interaction,
-        session_id: str,
-    ):
-        session = get_session(session_id)
-
-        if not session:
-            return
-
-        manga = session.get("manga")
-        chapters = session.get("chapters", [])
-
-        if not manga:
-            return
-
-        session["view"] = "chapters"
-
-        await interaction.response.edit_message(
-            embed=build_chapters(manga, chapters),
-            view=MangaNavigationView(
-                self,
-                session_id,
-                interaction.user.id,
-            ),
-        )
-
-    async def show_languages(
-        self,
-        interaction: discord.Interaction,
-        session_id: str,
-    ):
-        session = get_session(session_id)
-
-        if not session:
-            return
-
-        manga = session.get("manga")
-        chapters = session.get("chapters", [])
-
-        if not manga:
-            return
-
-        session["view"] = "languages"
-
-        await interaction.response.edit_message(
-            embed=build_languages(manga, chapters),
-            view=MangaNavigationView(
-                self,
-                session_id,
-                interaction.user.id,
-            ),
-        )
-
-    async def show_stats(
-        self,
-        interaction: discord.Interaction,
-        session_id: str,
-    ):
-        session = get_session(session_id)
-
-        if not session:
-            return
-
-        manga = session.get("manga")
-        chapters = session.get("chapters", [])
-
-        if not manga:
-            return
-
-        session["view"] = "stats"
-
-        await interaction.response.edit_message(
-            embed=build_stats(manga, chapters),
-            view=MangaNavigationView(
-                self,
-                session_id,
-                interaction.user.id,
-            ),
-        )
-
-    # ========================================================
-    # /SEARCH
+    # /ANIME
     # ========================================================
 
     @app_commands.command(
-        name="search",
-        description="Search the Lunar manga catalog.",
+        name="anime",
+        description="Get an anime recommendation or random anime.",
     )
     @app_commands.describe(
-        query="The manga title you want to search for.",
+        mode="Choose recommendation or random.",
     )
-    async def search(
+    @app_commands.choices(
+        mode=[
+            app_commands.Choice(name="Recommendation", value="rec"),
+            app_commands.Choice(name="Random", value="random"),
+        ]
+    )
+    async def anime(
         self,
         interaction: discord.Interaction,
-        query: str,
+        mode: Optional[app_commands.Choice[str]] = None,
     ):
-        query = query.strip()
+        if mode is None:
+            embed = discord.Embed(
+                title=f"{EMOJI['lunar']} Anime Archives",
+                description=(
+                    f"{EMOJI['aniheart']} What are you looking for?\n\n"
+                    "**Recommendation**\n"
+                    "> I'll analyze your Lunar watchlist "
+                    "and find something suited to it.\n\n"
+                    "**Random Anime**\n"
+                    "> Let the archive choose something "
+                    "completely random."
+                ),
+                color=discord.Color.blurple(),
+            )
+            embed.set_footer(text=f"{EMOJI['moon']} Choose an option below")
 
-        if not query:
             await interaction.response.send_message(
-                f"{EMOJI['question']} Please provide a manga title to search for.",
+                embed=embed,
+                view=AnimeModeView(self),
                 ephemeral=True,
             )
             return
 
-        if len(query) > 100:
-            await interaction.response.send_message(
-                f"{EMOJI['denied']} Search queries cannot exceed 100 characters.",
-                ephemeral=True,
-            )
+        if mode.value == "rec":
+            await self.run_recommendation(interaction)
             return
 
-        await interaction.response.defer()
+        await self.run_random(interaction)
 
-        await interaction.edit_original_response(
-            content=f"{EMOJI['loading']} Searching Lunar Catalog...",
-        )
+    # ========================================================
+    # RANDOM
+    # ========================================================
 
-        results = await search_manga(query)
-
-        if not results:
+    async def run_random(self, interaction: discord.Interaction):
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                f"{EMOJI['loading']} Searching the anime archives...",
+                ephemeral=True,
+            )
+        else:
             await interaction.edit_original_response(
-                content=f"{EMOJI['denied']} No manga found for **{query}**.",
+                content=f"{EMOJI['loading']} Searching the anime archives...",
+                embed=None,
+                view=None,
+            )
+
+        await asyncio.sleep(LOADING_TIME)
+        anime = await get_random_anime()
+
+        if not anime:
+            embed = discord.Embed(
+                title=f"{EMOJI['error']} Random Search Failed",
+                description=(
+                    f"{EMOJI['denied']} AniList didn't return a valid "
+                    "anime right now.\n\nPlease try again."
+                ),
+                color=discord.Color.red(),
+            )
+            embed.set_footer(text=EMOJI["moon"])
+
+            await interaction.edit_original_response(
+                content=None,
+                embed=embed,
+                view=None,
             )
             return
 
-        session_id = str(interaction.id)
-
-        set_session(
-            session_id,
-            {
-                "user_id": interaction.user.id,
-                "query": query,
-                "results": results,
-                "page": 0,
-                "view": "home",
-            },
+        embed = build_anime_embed(
+            anime,
+            heading=f"{EMOJI['lunar']} Random Pick:",
+            color=discord.Color.blurple(),
+        )
+        embed.description = (
+            f"{EMOJI['approved']} The archive selected this anime for you.\n\n"
+            f"{embed.description or ''}"
         )
 
         await interaction.edit_original_response(
-            content=f"{EMOJI['approved']} Search complete.",
-            embed=build_home(results, query),
-            view=MangaSearchView(
-                self,
-                session_id,
-                interaction.user.id,
-                results,
+            content=None,
+            embed=embed,
+            view=None,
+        )
+
+    # ========================================================
+    # RECOMMENDATION
+    # ========================================================
+
+    async def run_recommendation(self, interaction: discord.Interaction):
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                f"{EMOJI['loading']} Checking your Lunar account...",
+                ephemeral=True,
+            )
+        else:
+            await interaction.edit_original_response(
+                content=f"{EMOJI['loading']} Checking your Lunar account...",
+                embed=None,
+                view=None,
+            )
+
+        await asyncio.sleep(LOADING_TIME)
+
+        username = await get_linked_username(interaction.user.id)
+
+        if not username:
+            embed = discord.Embed(
+                title=f"{EMOJI['question']} Lunar Account Required",
+                description=(
+                    f"{EMOJI['denied']} You need a verified Lunar account "
+                    "to use personalized recommendations.\n\n"
+                    "Use `/link` to connect your account."
+                ),
+                color=discord.Color.orange(),
+            )
+            embed.set_footer(text=EMOJI["moon"])
+
+            await interaction.edit_original_response(
+                content=None,
+                embed=embed,
+                view=None,
+            )
+            return
+
+        await interaction.edit_original_response(
+            content=(
+                f"{EMOJI['loading']} "
+                f"Reading `{username}`'s Lunar profile..."
             ),
+            embed=None,
+            view=None,
+        )
+        await asyncio.sleep(LOADING_TIME)
+
+        profile = await fetch_lunar_profile(username)
+
+        if not profile:
+            embed = discord.Embed(
+                title=f"{EMOJI['error']} Lunar Profile Unavailable",
+                description=(
+                    f"{EMOJI['denied']} I couldn't retrieve `{username}` "
+                    "from Lunar right now."
+                ),
+                color=discord.Color.red(),
+            )
+            embed.set_footer(text=EMOJI["moon"])
+
+            await interaction.edit_original_response(
+                content=None,
+                embed=embed,
+                view=None,
+            )
+            return
+
+        watchlist_ids = extract_watchlist_ids(profile)
+
+        if not watchlist_ids:
+            embed = discord.Embed(
+                title=f"{EMOJI['question']} AniList Watchlist Unavailable",
+                description=(
+                    f"{EMOJI['denied']} Lunar returned your profile, but "
+                    "there isn't an AniList watchlist available to analyze.\n\n"
+                    "Connect AniList to Lunar and try again."
+                ),
+                color=discord.Color.orange(),
+            )
+            embed.set_footer(
+                text=f"{EMOJI['moon']} Lunar Account • {username}"
+            )
+
+            await interaction.edit_original_response(
+                content=None,
+                embed=embed,
+                view=None,
+            )
+            return
+
+        await interaction.edit_original_response(
+            content=(
+                f"{EMOJI['loading']} Analyzed `{len(watchlist_ids):,}` anime.\n"
+                "Finding something you haven't watched..."
+            ),
+            embed=None,
+            view=None,
+        )
+        await asyncio.sleep(LOADING_TIME)
+
+        recommendation = await get_recommendation(watchlist_ids)
+
+        if not recommendation:
+            embed = discord.Embed(
+                title=f"{EMOJI['question']} No Recommendation Found",
+                description=(
+                    f"{EMOJI['denied']} I couldn't find a suitable anime "
+                    "outside your watchlist."
+                ),
+                color=discord.Color.orange(),
+            )
+            embed.set_footer(text=EMOJI["moon"])
+
+            await interaction.edit_original_response(
+                content=None,
+                embed=embed,
+                view=None,
+            )
+            return
+
+        embed = build_anime_embed(
+            recommendation,
+            heading=f"{EMOJI['lunar']} Recommended:",
+            color=discord.Color.gold(),
+        )
+        embed.description = (
+            f"{EMOJI['approved']} Based on your Lunar watchlist.\n"
+            f"{EMOJI['moon']} Analyzed `{len(watchlist_ids):,}` anime.\n\n"
+            f"{embed.description or ''}"
+        )
+        embed.set_footer(
+            text=f"{EMOJI['moon']} Lunar Recommendation • {username}"
+        )
+
+        await interaction.edit_original_response(
+            content=None,
+            embed=embed,
+            view=None,
         )
 
 
@@ -832,4 +733,4 @@ class Search(commands.Cog):
 # ============================================================
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(Search(bot))
+    await bot.add_cog(Anime(bot))

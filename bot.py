@@ -5,7 +5,6 @@ import logging
 import os
 from pathlib import Path
 
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -15,6 +14,7 @@ from cogs.commands.linkaccount import LinkUsernameModal
 from cogs.utilities.database import db
 from cogs.utilities.emoji import EMOJI
 from cogs.utilities.error import install_error_logging
+from cogs.utilities import lunarapi
 
 
 # ============================================================
@@ -43,13 +43,6 @@ LUNAR_API = "https://api.lunarx.to"
 
 WEBSITE_CHECK_INTERVAL = 5 * 60
 PRESENCE_INTERVAL = 10
-
-HTTP_TIMEOUT = aiohttp.ClientTimeout(
-    total=15,
-    connect=5,
-    sock_connect=5,
-    sock_read=10,
-)
 
 
 LUNAR_STANDARD_HEADER = {
@@ -483,77 +476,21 @@ async def global_interaction_check(
 # HTTP STATUS
 # ============================================================
 
-async def fetch_status(
-    session: aiohttp.ClientSession,
-    url: str,
-) -> tuple[
-    int | None,
-    float | None,
-    str | None,
-]:
-
-    started = (
-        asyncio.get_running_loop().time()
-    )
-
-    try:
-
-        async with session.get(
-            url,
-            allow_redirects=True,
-        ) as response:
-
-            elapsed = (
-                asyncio.get_running_loop().time()
-                - started
-            ) * 1000
-
-            return (
-                response.status,
-                round(
-                    elapsed,
-                    2,
-                ),
-                None,
-            )
-
-    except Exception as exc:
-
-        elapsed = (
-            asyncio.get_running_loop().time()
-            - started
-        ) * 1000
-
-        return (
-            None,
-            round(
-                elapsed,
-                2,
-            ),
-            str(exc),
-        )
-
 
 async def get_lunar_status() -> dict[str, object]:
 
-    async with aiohttp.ClientSession(
-        timeout=HTTP_TIMEOUT,
-    ) as session:
+    website_task = lunarapi.ping(
+        LUNAR_WEBSITE,
+    )
 
-        website_task = fetch_status(
-            session,
-            LUNAR_WEBSITE,
-        )
+    api_task = lunarapi.ping(
+        LUNAR_API,
+    )
 
-        api_task = fetch_status(
-            session,
-            LUNAR_API,
-        )
-
-        website, api = await asyncio.gather(
-            website_task,
-            api_task,
-        )
+    website, api = await asyncio.gather(
+        website_task,
+        api_task,
+    )
 
     return {
         "website_status": website[0],
@@ -1542,6 +1479,16 @@ async def main():
 
             logger.exception(
                 "Failed to close PostgreSQL database."
+            )
+
+        try:
+
+            await lunarapi.close_session()
+
+        except Exception:
+
+            logger.exception(
+                "Failed to close Lunar API session."
             )
 
 

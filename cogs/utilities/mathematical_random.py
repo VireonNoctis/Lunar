@@ -8,6 +8,24 @@ from dataclasses import dataclass
 from typing import Sequence
 
 
+# ============================================================
+# Shared CSPRNG instance
+# ============================================================
+#
+# secrets.SystemRandom is a random.Random subclass backed by
+# os.urandom — the exact same OS entropy source CryptographicRandomizer
+# (randomizer.py) and MathematicalRandomness below use, just exposed
+# through the familiar random.Random API (.random(), .randint(a, b)).
+#
+# Use this instead of the plain `random` module anywhere a roll
+# needs to be trustworthy (coin/XP grants, anything gated by
+# chance) — bare `random` is a Mersenne Twister seeded from
+# system time, which is fine for cosmetic randomness but not for
+# anything resembling currency.
+
+secure_rng = secrets.SystemRandom()
+
+
 @dataclass(frozen=True, slots=True)
 class RandomProof:
     winners: tuple[str, ...]

@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -1402,7 +1403,7 @@ class Giveaway(
         except Exception:
 
             log.exception(
-                "Failed to restore active giveaways from POSTGRE."
+                "Failed to restore active giveaways from Scylla."
             )
 
             return

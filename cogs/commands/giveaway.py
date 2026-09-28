@@ -7,7 +7,6 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -18,6 +17,19 @@ from cogs.utilities.emoji import EMOJI
 from cogs.utilities.randomizer import (
     CryptographicRandomizer,
     RandomSelection,
+)
+from cogs.utilities import giveaway_rewards
+from cogs.utilities.giveaway_rewards import (
+    REWARD_TYPES,
+    WINNER_ANNOUNCE_ROLE_ID,
+    RewardConfigView,
+    GachaRewardModal,
+    CoinsRewardModal,
+    XPRewardModal,
+    OtherRewardModal,
+    resolve_gacha_card,
+    apply_giveaway_rewards,
+    build_rewards_summary,
 )
 
 log = logging.getLogger("lunar.giveaway")
@@ -139,6 +151,29 @@ def mention_users(
     )
 
 
+def _describe_reward(
+    rewards: dict[str, Any],
+) -> str:
+    reward_type = rewards.get("type")
+
+    if reward_type == "gacha":
+        return f"🎴 {rewards.get('card_name', 'Unknown Card')}"
+
+    if reward_type == "coins":
+        return f"🪙 {int(rewards.get('amount', 0)):,} coins"
+
+    if reward_type == "xp":
+        return f"✨ {int(rewards.get('amount', 0)):,} XP"
+
+    if reward_type == "donator_role":
+        return "💎 Website Donator role"
+
+    if reward_type == "other":
+        return rewards.get("description", "Manual reward")
+
+    return "Unknown reward"
+
+
 def parse_metadata(
     value: Any,
 ) -> dict[str, Any]:
@@ -174,6 +209,29 @@ def parse_metadata(
         return parsed
 
     return {}
+
+
+def parse_json_field(
+    value: Any,
+    default: Any = None,
+) -> Any:
+    """
+    Decode one JSON-encoded metadata value (metadata() stores
+    last_result/draw_history/rewards as json.dumps() strings).
+    Already-decoded dict/list values pass through unchanged, and
+    anything malformed falls back to `default` instead of raising.
+    """
+
+    if not value:
+        return default
+
+    if isinstance(value, (dict, list)):
+        return value
+
+    try:
+        return json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return default
 
 
 def normalize_ids(
@@ -256,6 +314,10 @@ class GiveawayState:
     ] = field(
         default_factory=list
     )
+
+    rewards: Optional[
+        dict[str, Any]
+    ] = None
 
     @classmethod
     def from_row(
@@ -428,29 +490,17 @@ class GiveawayState:
                     or 1
                 ),
             ),
-            last_result=(
-                metadata.get(
-                    "last_result"
-                )
-                if isinstance(
-                    metadata.get(
-                        "last_result"
-                    ),
-                    dict,
-                )
-                else None
+            last_result=parse_json_field(
+                metadata.get("last_result"),
+                default=None,
             ),
-            draw_history=(
-                metadata.get(
-                    "draw_history"
-                )
-                if isinstance(
-                    metadata.get(
-                        "draw_history"
-                    ),
-                    list,
-                )
-                else []
+            draw_history=parse_json_field(
+                metadata.get("draw_history"),
+                default=[],
+            ),
+            rewards=parse_json_field(
+                metadata.get("rewards"),
+                default=None,
             ),
         )
 
@@ -491,6 +541,14 @@ class GiveawayState:
                     ",",
                     ":",
                 ),
+            ),
+            "rewards": (
+                json.dumps(
+                    self.rewards,
+                    separators=(",", ":"),
+                )
+                if self.rewards is not None
+                else ""
             ),
         }
 
@@ -1344,7 +1402,7 @@ class Giveaway(
         except Exception:
 
             log.exception(
-                "Failed to restore active giveaways from Scylla."
+                "Failed to restore active giveaways from POSTGRE."
             )
 
             return
@@ -1739,7 +1797,7 @@ class Giveaway(
 
         return payload
 
-  def watch_link_completion(
+    def watch_link_completion(
         self,
         interaction: discord.Interaction,
         user_id: int,
@@ -2599,6 +2657,36 @@ class Giveaway(
             )
         )
 
+        # ----------------------------------------------------
+        # Reward distribution
+        # ----------------------------------------------------
+
+        announce_content = None
+
+        if result is not None and state.rewards:
+            guild = getattr(channel, "guild", None)
+
+            reward_results = await apply_giveaway_rewards(
+                self.bot,
+                guild,
+                list(result.winners),
+                state.rewards,
+            )
+
+            summary = build_rewards_summary(reward_results)
+
+            if summary:
+                result_embed.add_field(
+                    name=f"{EMOJI['gift']} Rewards",
+                    value=summary[:1024],
+                    inline=False,
+                )
+
+            announce_content = (
+                f"<@&{WINNER_ANNOUNCE_ROLE_ID}> — winners have "
+                "received their rewards above!"
+            )
+
         if state.message_id:
 
             try:
@@ -2629,10 +2717,12 @@ class Giveaway(
                 )
 
         await channel.send(
+            content=announce_content,
             embed=result_embed,
             allowed_mentions=(
                 discord.AllowedMentions(
-                    users=True
+                    users=True,
+                    roles=True,
                 )
             ),
         )
@@ -2728,6 +2818,201 @@ class Giveaway(
                 ),
                 color=discord.Color.green(),
             ),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="grewards",
+        description=(
+            "Configure what winners automatically receive."
+        ),
+    )
+    @app_commands.describe(
+        giveaway="Giveaway ID or Discord message ID."
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def grewards(
+        self,
+        interaction: discord.Interaction,
+        giveaway: str,
+    ) -> None:
+
+        state = await self.resolve_identifier(giveaway)
+
+        if state is None:
+            await interaction.response.send_message(
+                f"{EMOJI['error']} No giveaway found.",
+                ephemeral=True,
+            )
+            return
+
+        if state.ended or state.deleted:
+            await interaction.response.send_message(
+                f"{EMOJI['error']} That giveaway has already "
+                "ended — rewards can't be configured anymore.",
+                ephemeral=True,
+            )
+            return
+
+        async def finalize(
+            pick_interaction: discord.Interaction,
+            rewards: dict[str, Any],
+        ) -> None:
+            state.rewards = rewards
+
+            try:
+                await self.save_metadata(state)
+
+            except Exception as error:
+                from cogs.utilities.error import log_error
+
+                await log_error(
+                    error,
+                    context="Save Giveaway Rewards",
+                    bot=self.bot,
+                    guild=pick_interaction.guild,
+                    user=pick_interaction.user,
+                    extra={"Giveaway ID": state.giveaway_id},
+                )
+
+                await pick_interaction.response.send_message(
+                    f"{EMOJI['error']} Couldn't save that "
+                    "reward config — it's been logged.",
+                    ephemeral=True,
+                )
+                return
+
+            meta = REWARD_TYPES.get(rewards["type"], {})
+
+            await pick_interaction.response.send_message(
+                embed=discord.Embed(
+                    title=f"{EMOJI['approved']} Rewards Configured",
+                    description=(
+                        f"**Type:** {meta.get('emoji', '')} "
+                        f"{meta.get('label', rewards['type'])}\n"
+                        f"**Detail:** {_describe_reward(rewards)}\n\n"
+                        f"Each of the `{state.winner_count}` "
+                        "winner(s) will automatically receive "
+                        "this when the giveaway ends."
+                    ),
+                    color=discord.Color.green(),
+                ),
+                ephemeral=True,
+            )
+
+        async def on_pick(
+            select_interaction: discord.Interaction,
+            reward_type: str,
+        ) -> None:
+
+            if reward_type == "donator_role":
+                await finalize(
+                    select_interaction,
+                    {"type": "donator_role"},
+                )
+                return
+
+            async def gacha_submit(
+                modal_interaction: discord.Interaction,
+                query: str,
+            ) -> None:
+                card = await resolve_gacha_card(query)
+
+                if card is None:
+                    await modal_interaction.response.send_message(
+                        f"{EMOJI['error']} No card matching "
+                        f"`{query}` was found in the live "
+                        "catalog — double-check the name/ID.",
+                        ephemeral=True,
+                    )
+                    return
+
+                await finalize(
+                    modal_interaction,
+                    {
+                        "type": "gacha",
+                        "template_id": card.get("template_id"),
+                        "card_name": card.get("name"),
+                    },
+                )
+
+            async def coins_submit(
+                modal_interaction: discord.Interaction,
+                raw_amount: str,
+            ) -> None:
+                try:
+                    amount = int(raw_amount.strip())
+                    if amount <= 0:
+                        raise ValueError
+
+                except ValueError:
+                    await modal_interaction.response.send_message(
+                        f"{EMOJI['error']} Amount must be a "
+                        "positive whole number.",
+                        ephemeral=True,
+                    )
+                    return
+
+                await finalize(
+                    modal_interaction,
+                    {"type": "coins", "amount": amount},
+                )
+
+            async def xp_submit(
+                modal_interaction: discord.Interaction,
+                raw_amount: str,
+            ) -> None:
+                try:
+                    amount = int(raw_amount.strip())
+                    if amount <= 0:
+                        raise ValueError
+
+                except ValueError:
+                    await modal_interaction.response.send_message(
+                        f"{EMOJI['error']} Amount must be a "
+                        "positive whole number.",
+                        ephemeral=True,
+                    )
+                    return
+
+                await finalize(
+                    modal_interaction,
+                    {"type": "xp", "amount": amount},
+                )
+
+            async def other_submit(
+                modal_interaction: discord.Interaction,
+                description: str,
+            ) -> None:
+                await finalize(
+                    modal_interaction,
+                    {"type": "other", "description": description},
+                )
+
+            modal_by_type = {
+                "gacha": GachaRewardModal(gacha_submit),
+                "coins": CoinsRewardModal(coins_submit),
+                "xp": XPRewardModal(xp_submit),
+                "other": OtherRewardModal(other_submit),
+            }
+
+            await select_interaction.response.send_modal(
+                modal_by_type[reward_type]
+            )
+
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title=f"{EMOJI['gift']} Configure Winner Rewards",
+                description=(
+                    f"**Giveaway:** {state.prize}\n"
+                    f"**Winners:** `{state.winner_count}`\n\n"
+                    "Pick what every winner automatically "
+                    "receives when this giveaway ends."
+                ),
+                color=discord.Color.blurple(),
+            ),
+            view=RewardConfigView(interaction.user.id, on_pick),
             ephemeral=True,
         )
 

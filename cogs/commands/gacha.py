@@ -19,15 +19,11 @@ log = logging.getLogger("lunar.gacha")
 # Configuration
 # ============================================================
 
-CACHE_SECONDS = 120  # admin card/cover lists change rarely
+CACHE_SECONDS = 120
 PAGE_SIZE = 10
 VIEW_TIMEOUT = 300
 
-# ------------------------------------------------------------
-# Rarity design — one star emoji + one embed color per rarity,
-# climbing in intensity from common (1) to mythic (6+).
-# ------------------------------------------------------------
-
+# One star emoji and embed color per rarity.
 RARITY_STAR_EMOJI = {
     1: EMOJI["greenstar"],
     2: EMOJI["greenstar"],
@@ -38,12 +34,12 @@ RARITY_STAR_EMOJI = {
 }
 
 RARITY_COLOR = {
-    1: 0x9CA3AF,  # slate — common
-    2: 0x22C55E,  # green — uncommon
-    3: 0x38BDF8,  # cyan  — rare
-    4: 0xA855F7,  # purple — epic
-    5: 0xF97316,  # orange — legendary
-    6: 0xEF4444,  # red   — mythic
+    1: 0x9CA3AF,
+    2: 0x22C55E,
+    3: 0x38BDF8,
+    4: 0xA855F7,
+    5: 0xF97316,
+    6: 0xEF4444,
 }
 
 DEFAULT_STAR = EMOJI["pinkstar"]
@@ -56,9 +52,7 @@ def rarity_stars(rarity: int) -> str:
 
 
 def rarity_color(rarity: int) -> discord.Color:
-    return discord.Color(
-        RARITY_COLOR.get(rarity, DEFAULT_COLOR)
-    )
+    return discord.Color(RARITY_COLOR.get(rarity, DEFAULT_COLOR))
 
 
 # ============================================================
@@ -89,7 +83,6 @@ async def _get_cards(*, force: bool = False) -> list[dict[str, Any]]:
     result = await lunarapi.get_gacha_cards()
 
     if result is None:
-        # Serve stale data over nothing, if we have it.
         return _cache.cards
 
     cards = result.get("cards")
@@ -164,19 +157,19 @@ def build_card_embed(card: dict[str, Any]) -> discord.Embed:
     )
 
     embed.add_field(
-        name="⚔️ Attack",
+        name=f"{EMOJI['ATK']} Attack",
         value=f"`{card.get('base_attack', 0)}` "
         f"(+{card.get('growth_attack', 0)}/lvl)",
         inline=True,
     )
     embed.add_field(
-        name="🛡️ Defense",
+        name=f"{EMOJI['DEF']} Defense",
         value=f"`{card.get('base_defense', 0)}` "
         f"(+{card.get('growth_defense', 0)}/lvl)",
         inline=True,
     )
     embed.add_field(
-        name="❤️ HP",
+        name=f"{EMOJI['HP']} HP",
         value=f"`{card.get('base_hp', 0)}` "
         f"(+{card.get('growth_hp', 0)}/lvl)",
         inline=True,
@@ -221,7 +214,7 @@ def build_card_embed(card: dict[str, Any]) -> discord.Embed:
     if image_url:
         embed.set_thumbnail(url=image_url)
 
-    embed.set_footer(text="☾ Lunar Gacha")
+    embed.set_footer(text=f"{EMOJI['moon']} Gacha")
 
     return embed
 
@@ -268,7 +261,6 @@ def build_serials_embed(
             value="Nobody owns a copy of this card.",
             inline=False,
         )
-
     else:
         lines = []
 
@@ -287,7 +279,10 @@ def build_serials_embed(
     total_pages = max(1, -(-len(entries) // PAGE_SIZE))
 
     embed.set_footer(
-        text=f"☾ Lunar Gacha • Page {page + 1}/{total_pages}"
+        text=(
+            f"{EMOJI['moon']}  Gacha • "
+            f"Page {page + 1}/{total_pages}"
+        )
     )
 
     return embed
@@ -301,13 +296,12 @@ def build_browse_embed(
     page_covers = covers[start : start + PAGE_SIZE]
 
     embed = discord.Embed(
-        title="🎴 Gacha Card Catalog",
+        title=f"{EMOJI['cards']} Gacha Card Catalog",
         color=DEFAULT_COLOR,
     )
 
     if not page_covers:
         embed.description = "No cards found."
-
     else:
         lines = []
 
@@ -326,8 +320,10 @@ def build_browse_embed(
     total_pages = max(1, -(-len(covers) // PAGE_SIZE))
 
     embed.set_footer(
-        text=f"☾ Lunar Gacha • Page {page + 1}/{total_pages} "
-        f"• {len(covers)} cards"
+        text=(
+            f"{EMOJI['moon']} Gacha • "
+            f"Page {page + 1}/{total_pages} • {len(covers)} cards"
+        )
     )
 
     return embed
@@ -338,11 +334,7 @@ def build_browse_embed(
 # ============================================================
 
 class GachaPageView(discord.ui.View):
-    """
-    Generic Previous/Next paginator shared by /gacha owners and
-    /gacha list — the two commands whose data can span more than
-    one page.
-    """
+    """Paginator shared by the owners and catalog commands."""
 
     def __init__(
         self,
@@ -422,10 +414,7 @@ class GachaPageView(discord.ui.View):
 # ============================================================
 
 class Gacha(commands.Cog):
-    """
-    /gacha — card lookup, ownership, and catalog browsing, backed
-    by the Lunar gacha admin/public endpoints via lunarapi.
-    """
+    """Gacha card lookup, ownership, and catalog browsing."""
 
     group = app_commands.Group(
         name="gacha",
@@ -445,7 +434,6 @@ class Gacha(commands.Cog):
         current: str,
     ) -> list[app_commands.Choice[str]]:
         cards = await _get_covers()
-
         current = current.strip().lower()
 
         matches = [
@@ -539,9 +527,7 @@ class Gacha(commands.Cog):
         view = GachaPageView(
             interaction.user.id,
             total_items,
-            lambda page: build_serials_embed(
-                template_id, data, page
-            ),
+            lambda page: build_serials_embed(template_id, data, page),
         )
 
         await interaction.followup.send(
@@ -588,9 +574,9 @@ class Gacha(commands.Cog):
 
         covers = sorted(
             covers,
-            key=lambda c: (
-                -int(c.get("rarity") or 0),
-                str(c.get("name", "")),
+            key=lambda card: (
+                -int(card.get("rarity") or 0),
+                str(card.get("name", "")),
             ),
         )
 

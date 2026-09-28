@@ -68,7 +68,7 @@ def format_status(
         )
 
         return (
-            f"{EMOJI['approved']} **Up**\n"
+            f"{EMOJI['approved']} {EMOJI['Live']} **Up**\n"
             f"HTTP `{status}` • {latency_text}"
         )
 
@@ -229,6 +229,12 @@ class About(commands.Cog):
             and api_status == 200
         )
 
+        overall_status = (
+            f"{EMOJI['Live']} **All Systems Operational**"
+            if systems_online
+            else f"{EMOJI['denied']} **Systems Degraded**"
+        )
+
         # ----------------------------------------------------
         # CURRENT PRESENCE
         # ----------------------------------------------------
@@ -259,7 +265,9 @@ class About(commands.Cog):
             description=(
                 f"{EMOJI['moon']} "
                 "Lunar's Discord infrastructure, "
-                "statistics and service status."
+                "statistics and service status.\n\n"
+                f"{EMOJI['health']} **System Status**\n"
+                f"{overall_status}"
             ),
             color=(
                 discord.Color.green()
@@ -274,7 +282,7 @@ class About(commands.Cog):
         # ----------------------------------------------------
 
         embed.add_field(
-            name=f"{EMOJI['lunar']} Information",
+            name=f"{EMOJI['diagnostics']} Information",
             value=(
                 f"**Version:** `{bot_version}`\n"
                 f"**Uptime:** `{uptime}`\n"
@@ -304,7 +312,7 @@ class About(commands.Cog):
         # ----------------------------------------------------
 
         embed.add_field(
-            name=f"{EMOJI['dev']} Commands",
+            name=f"{EMOJI['commands']} Commands",
             value=(
                 f"**Registered:** "
                 f"`{registered_commands:,}`\n"
@@ -319,7 +327,7 @@ class About(commands.Cog):
         # ----------------------------------------------------
 
         embed.add_field(
-            name=f"{EMOJI['loading']} Latency",
+            name=f"{EMOJI['gateway']} Latency",
             value=(
                 f"**Discord:** "
                 f"`{gateway_latency}ms`"
@@ -345,7 +353,7 @@ class About(commands.Cog):
         # ----------------------------------------------------
 
         embed.add_field(
-            name=f"{EMOJI['dev']} API",
+            name=f"{EMOJI['system']} API",
             value=format_status(
                 api_status,
                 api_latency,
@@ -358,9 +366,10 @@ class About(commands.Cog):
         # ----------------------------------------------------
 
         embed.add_field(
-            name=f"{EMOJI['moon']} Current Presence",
+            name=f"{EMOJI['Live']} Current Presence",
             value=(
-                f"Watching `{current_presence}`"
+                f"{EMOJI['moon']} Watching "
+                f"`{current_presence}`"
             ),
             inline=True,
         )

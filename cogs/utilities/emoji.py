@@ -20,6 +20,9 @@ EMOJI = MappingProxyType({
     "gift1": "<:gift:1551221177832181791>",
     "dcloading": "<a:discordloading:1550505642580770947>",
     "soldout"; "<a:soldout:1554118944040947732>", # For gacha Cards that are x/x mints and other stuff.
+    "xp": "<a:xp:1554150338733408437>",
+    "leaderboard": "<a:leaderboard1:1554151263837364234>",
+      # need to add Coins.
 
     # ─────────────────────────────
     # Gacha/Cards
@@ -40,7 +43,7 @@ EMOJI = MappingProxyType({
     # ─────────────────────────────
     "moon": "<:moon:1554114955874406410>",
     "lunar": "<:Lunar:1550506869557174365>", # Main Brand Emoji.
-    "crown": "<a:crown:1554107984433385522>", # Can Be used for Giveaway Winners and Owners.
+    "crown": "<a:crown:1554107984433385522>", # Can Be used for Giveaway Winners, Leaderboard and Owners.
     "Owner": "<a:Owner:1550461325426036797>", # Bot Owner.
     "Donator": "<a:Donator:1550461328529817671>", # Website and Server Donor/Donators.
     "Live": "<a:live:1554123191016890398>", # If Bot is Live.

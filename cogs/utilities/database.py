@@ -3503,7 +3503,7 @@ class GuildXPRepository(BaseRepository):
             ),
         )
 
-            await self.db.execute(
+        await self.db.execute(
             """
             INSERT INTO guild_xp_rank (
                 guild_id,

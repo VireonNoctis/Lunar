@@ -20,6 +20,15 @@ EMOJI = MappingProxyType({
     "gift1": "<:gift:1551221177832181791>",
     "dcloading": "<a:discordloading:1550505642580770947>",
     "soldout"; "<a:soldout:1554118944040947732>", # For gacha Cards that are x/x mints and other stuff.
+
+    # ─────────────────────────────
+    # Gacha/Cards
+    # ─────────────────────────────
+    "cards": "<:cards:1554126900715196579>", # all Gacha Based stuff should use this
+    "ATK": "<:Attack:1554137157084516422>",
+    "HP": "<:HP:1554137978048348250>",
+    "DEF": "<:Defense:1554137975447752845>",
+
     # ─────────────────────────────
     # Staff
     # ─────────────────────────────

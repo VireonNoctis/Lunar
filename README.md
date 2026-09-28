@@ -2,7 +2,7 @@ Lunar
 
 «Lunar Bot V3 — a modular Discord bot built for the Lunar / Lunaranime community.»
 
-Lunar is a feature-rich Discord bot focused on community management, entertainment, integrations, XP/leveling, music, moderation, giveaways, account linking, and Lunar-specific services.
+Lunar is a feature-rich Discord bot focused on community management, entertainment, integrations, XP/leveling, a coins economy, a gacha card game, music release tracking, moderation, giveaways (with automated reward payouts), account linking, and Lunar-specific services.
 
 The project is actively maintained and its dashboard is currently undergoing a major revamp.
 
@@ -21,31 +21,44 @@ Features
 
 Community
 
-- XP and leveling system
-- Leaderboards
-- Guild XP tracking
-- Account linking
-- Suggestions
-- Modmail
+- Website XP and leveling system (source of truth lives on lunarx.to)
+- Guild XP — a separate, Discord-only leveling track for this server
+- Coins economy — a second currency, earned from messages and level-ups on either XP system
+- Role-based earning bonuses (Website Donator +50%, Server Booster +25%, stacking)
+- Leaderboards (Guild XP and Lunar website XP)
+- Account linking (/link) — ties your Discord account to your Lunar account
 - Staff tools
 - Channel management
 - Inbox utilities
-- Birthday/community interactions
+- Interactive Discord components (/interact)
+
+Gacha
+
+- Card catalog lookup with full stats/skills (/gacha card)
+- Ownership/mint-number lookup per card (/gacha owners)
+- Catalog browsing by rarity (/gacha list)
+- Admin card-gifting integration (used by giveaway rewards)
+
+Giveaways
+
+- Cryptographically-verifiable winner drawing (commitment/proof included in results)
+- Automated reward payouts — configure once per giveaway (/grewards) and every
+  winner automatically receives gacha cards, coins, XP, a donator role, or a
+  manual reward when the giveaway ends
+- Reroll and re-verification of entrants' linked accounts
 
 Entertainment
 
 - Akinator
-- Coin flip
+- Coin flip (provably fair)
 - Dad jokes
 - Random memes
-- Fun commands
-- Randomizer utilities
-- Interactive Discord components
+- Fun commands (8ball, dice, rate)
+- Cryptographic randomizer utilities
 
 Music
 
-- T-Music commands
-- Music search/integration systems
+- T-Music release tracking commands (this tracks new releases from artists/tags — it is not a voice-channel music player)
 - Spotify integration support
 - YouTube API support
 - SoundCloud integration support
@@ -53,22 +66,31 @@ Music
 Administration
 
 - Moderation utilities
-- Giveaway management
-- System management
+- Giveaway management + automated rewards
+- System diagnostics panel (/system)
 - Restart controls
 - Maintenance mode
-- Error handling
-- Automated cog loading
+- Centralized error handling with Discord channel logging (cogs/utilities/error.py)
+- Automated cog loading (bot.py auto-discovers every cog under cogs/ at startup)
 - Slash-command synchronization
 
 Lunar Integrations
 
-- Lunar API integration
+- cogs/utilities/lunarapi.py — the single shared client for every Lunar API call
+  (XP grants, coin grants, gacha lookups/gifting, profile lookups, status pings).
+  One session, one place auth headers live, one error type.
 - Lunar XP integration
+- Lunar coins integration
+- Lunar gacha integration (lookup + admin gifting)
 - GitHub integration
 - Collection/reply systems
 - Staff guide systems
-- External service integrations
+
+Help
+
+- /help — an in-Discord command reference with a category dropdown, covering
+  every command plus deep-dive pages explaining exactly how the XP/coins and
+  gacha systems work under the hood.
 
 ---
 
@@ -91,46 +113,58 @@ Lunar-main/
 │   │   ├── coinflip.py
 │   │   ├── dadjoke.py
 │   │   ├── fun.py
+│   │   ├── gacha.py
 │   │   ├── giveaway.py
+│   │   ├── help.py
 │   │   ├── inbox.py
 │   │   ├── interactions.py
 │   │   ├── leaderboard.py
 │   │   ├── level.py
 │   │   ├── linkaccount.py
-│   │   ├── modmail.py
 │   │   ├── randommeme.py
 │   │   ├── restart.py
 │   │   ├── search.py
 │   │   ├── steal.py
-│   │   ├── suggest.py
 │   │   ├── system.py
 │   │   └── tmusic.py
 │   │
 │   ├── integrations/
-│   │   ├── api.py
+│   │   ├── coins.py
 │   │   ├── collectionreply.py
 │   │   ├── counting.py
+│   │   ├── gacha-int.py
 │   │   ├── github.py
 │   │   ├── guild_xp.py
-│   │   ├── modmail-int.py
 │   │   ├── staffguide.py
 │   │   └── xp.py
 │   │
 │   └── utilities/
+│       ├── api.py
 │       ├── database.py
 │       ├── emoji.py
 │       ├── error.py
 │       ├── generatecode.py
+│       ├── giveaway_rewards.py
 │       ├── info.py
 │       ├── level_card.py
+│       ├── lunarapi.py
+│       ├── mathematical_random.py
 │       ├── randomizer.py
 │       ├── xp.py
 │       └── xp_announcment.py
+│
+├── telegram/
+│   └── bots/
+│       ├── lunar.py
+│       ├── nova.py
+│       └── sapphire.py
 │
 └── dashboard/
     └── backend/
         └── main.py
 ```
+Note: `bot.py` auto-discovers every `.py` file under `cogs/` (excluding `cogs/utilities/`) at startup and loads it as a cog — new command/integration files don't need to be registered anywhere. `cogs/utilities/` holds shared, non-cog code (the database layer, the Lunar API client, the XP/coin math, etc.). The `telegram/` bots are separate standalone processes — they are not loaded by `bot.py` and have their own tokens/config.
+
 ---
 
 Requirements
@@ -163,7 +197,7 @@ cd Lunar-main
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv
+python -m pip install -U discord.py aiohttp akinator.py python-dotenv Pillow "psycopg[binary]" psycopg-pool
 python bot.py
 ```
 ---
@@ -174,19 +208,23 @@ cd Lunar-main
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv
+python -m pip install -U discord.py aiohttp akinator.py python-dotenv Pillow "psycopg[binary]" psycopg-pool
 python bot.py
 ```
+See `install.txt` for the full package breakdown, optional dashboard/Telegram dependencies, and what each package is actually for.
+
 ---
 
 Environment Configuration
 ```
-Create a ".env" file in the root directory:
+Create a ".env" file in the root directory (or copy .env.example):
 
 TOKEN=your_discord_bot_token
 
 lunar_token=your_lunar_api_token
-bypass_token=your_lunar_xp_bypass_token
+bypass_token=your_lunar_bypass_token
+
+DATABASE_URL=postgresql://user:password@host:5432/lunar
 
 SPOTIFY_CLIENT_ID=your_spotify_client_id
 SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
@@ -199,6 +237,8 @@ TMUSIC_POLL_INTERVAL_MINUTES=10
 
 «Never commit your real ".env" file to GitHub or share your Discord bot token publicly.»
 ```
+Every Lunar API call in the bot (XP, coins, gacha, profile lookups) reads `lunar_token`/`bypass_token` in **lowercase** — that's the only casing anything in the codebase actually reads.
+
 ---
 
 Discord Bot Setup
@@ -222,20 +262,24 @@ The bot also needs the required permissions in the Discord server where it is in
 
 Database
 
-Lunar uses a ScyllaDB/Cassandra-compatible database layer.
+Lunar uses **PostgreSQL** (via `psycopg` + `psycopg_pool`) as its database layer — see `cogs/utilities/database.py` for the full schema (it creates its own tables on startup).
 
 Install the Python driver with:
 ```
-pip install scylla-driver
+pip install "psycopg[binary]" psycopg-pool
 ```
-The database layer uses the Cassandra-compatible Python modules provided by the driver.
+Point the bot at your database with either a single DSN or individual vars:
+```
+DATABASE_URL=postgresql://user:password@host:5432/lunar
 
-A typical local ScyllaDB configuration uses:
-
-Host: 127.0.0.1
-Port: 9042
-
-Make sure the database is available before starting Lunar.
+# ...or...
+PGHOST=127.0.0.1
+PGPORT=5432
+PGUSER=your_postgres_user
+PGPASSWORD=your_postgres_password
+PGDATABASE=lunar
+```
+Make sure PostgreSQL is running and reachable before starting Lunar.
 
 ---
 
@@ -263,7 +307,7 @@ Lunar Bot
     │
     ├── Discord
     │
-    ├── ScyllaDB
+    ├── PostgreSQL
     │
     └── Dashboard API
             │
@@ -278,16 +322,19 @@ Until the revamp is complete, Discord remains the primary interface for Lunar ma
 
 Dashboard Backend
 
-The current dashboard backend is based around:
+The current dashboard backend is a small FastAPI app based around:
 
 - FastAPI
 - Pydantic
-- Redis / aioredis
-- SQLAlchemy
+- Uvicorn (to run it)
+- aioredis (optional — try/except-imported, degrades cleanly if absent)
+- SQLAlchemy (optional — same graceful degrade, and note it's a
+  separate DB connection from the bot's own psycopg layer even
+  though both default to reading `DATABASE_URL`)
 
 Install the backend dependencies:
 
-python -m pip install -U fastapi pydantic uvicorn aioredis sqlalchemy
+python -m pip install -U fastapi pydantic uvicorn aioredis SQLAlchemy
 
 Run the backend during development:
 
@@ -313,7 +360,7 @@ sudo apt update && sudo apt upgrade -y`
 
 Install the required packages:
 `
-sudo apt install -y python3 python3-pip python3-venv git`
+sudo apt install -y python3 python3-pip python3-venv git postgresql`
 
 Verify Python:
 `
@@ -341,11 +388,11 @@ python -m pip install --upgrade pip`
 
 Install Lunar:
 `
-python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv`
+python -m pip install -U discord.py aiohttp akinator.py python-dotenv Pillow "psycopg[binary]" psycopg-pool`
 
 For dashboard development:
 `
-python -m pip install -U fastapi pydantic uvicorn aioredis sqlalchemy`
+python -m pip install -U fastapi pydantic uvicorn`
 
 ---
 
@@ -358,7 +405,9 @@ Add your production environment variables:
 TOKEN=your_discord_bot_token
 
 lunar_token=your_lunar_api_token
-bypass_token=your_lunar_xp_bypass_token
+bypass_token=your_lunar_bypass_token
+
+DATABASE_URL=postgresql://user:password@127.0.0.1:5432/lunar
 
 SPOTIFY_CLIENT_ID=your_spotify_client_id
 SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
@@ -405,7 +454,7 @@ Paste:
 
 [Unit]
 Description=Lunar Discord Bot
-After=network.target
+After=network.target postgresql.service
 
 [Service]
 Type=simple
@@ -507,7 +556,7 @@ source .venv/bin/activate
 
 Update dependencies:
 
-python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv
+python -m pip install -U discord.py aiohttp akinator.py python-dotenv Pillow "psycopg[binary]" psycopg-pool
 
 Start Lunar:
 
@@ -539,6 +588,10 @@ Check an individual cog:
 
 python -m py_compile cogs/commands/about.py
 
+Check every file in the project at once:
+
+find . -name "*.py" -print0 | xargs -0 -n1 python -m py_compile
+
 ---
 
 Security
@@ -547,13 +600,15 @@ Never commit or publicly expose:
 
 .env
 Discord bot tokens
-API keys
-Database credentials
+API keys (lunar_token, bypass_token, Spotify/YouTube/SoundCloud credentials)
+Database credentials (DATABASE_URL, PGPASSWORD)
 Private authentication tokens
 
 Use environment variables for sensitive configuration.
 
 If a Discord token or API credential is accidentally exposed, revoke/regenerate it immediately.
+
+Note on the `ERROR_LOG_CHANNEL_ID` wired into `cogs/utilities/error.py`: uncaught errors across the bot are logged to a dedicated Discord channel with a full traceback attachment. Make sure that channel is staff-only.
 
 ---
 
@@ -570,6 +625,7 @@ A typical VPS installation:
 ├── install.txt
 │
 ├── cogs/
+├── telegram/
 │
 └── dashboard/
     └── backend/
@@ -591,9 +647,11 @@ Production architecture:
               ┌────────────┼────────────┐
               │            │            │
         ┌─────▼─────┐ ┌────▼─────┐ ┌──▼──────────┐
-        │ ScyllaDB  │ │ Lunar API│ │ Dashboard   │
+        │PostgreSQL │ │ Lunar API│ │ Dashboard   │
         └───────────┘ └──────────┘ └─────────────┘
 ```
+`Lunar API` above is everything under `https://api.lunarx.to` — XP grants, coin grants, gacha lookups/gifting, and profile lookups — all routed through the single shared client in `cogs/utilities/lunarapi.py`.
+
 ---
 
 Troubleshooting
@@ -616,7 +674,11 @@ Make sure the token has not been regenerated or revoked.
 
 Database Connection Failure
 
-Verify that ScyllaDB is running and that Lunar can connect to the configured host and port.
+Verify that PostgreSQL is running and that `DATABASE_URL` (or `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`) points at a reachable instance.
+
+Lunar API Calls Failing / Silently Doing Nothing
+
+Check that `lunar_token` and `bypass_token` are set — in **lowercase**. Every Lunar API call in the bot goes through `cogs/utilities/lunarapi.py`, which only reads the lowercase names.
 
 Missing Python Package
 
@@ -636,7 +698,7 @@ Then inspect:
 
 sudo journalctl -u lunar -n 100
 
-The logs should reveal the Python exception or service configuration problem.
+The logs should reveal the Python exception or service configuration problem. Uncaught exceptions are also logged to the configured Discord error-log channel with a full traceback attached.
 
 ---
 
@@ -658,7 +720,7 @@ The dashboard currently remains a work in progress and should not be considered 
 
 Lunar
 
-Built by Vireon Noctis & @real.dev,io on discord
+Built by Vireon Noctis & real on discord
 
 Lunar Bot V3
 Made with ♥ and a soul.

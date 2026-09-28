@@ -27,28 +27,36 @@ UTILITIES_PACKAGE: Final[str] = "cogs.utilities"
 # ============================================================
 # COMMAND EXTENSIONS
 # ============================================================
-
+#
+# NOTE: bot.py loads cogs by auto-discovering every *.py file
+# under cogs/ (excluding cogs/utilities/) at startup — see
+# discover_cogs() in bot.py. These tuples are NOT read by that
+# loader; they exist as a human-readable registry of what's on
+# disk. Keep them in sync with the actual files so they stay
+# useful as documentation/tooling metadata.
 
 COMMAND_MODULES: Final[tuple[str, ...]] = (
     "about",
+    "akinator",
     "anime",
     "channel",
     "close",
     "coinflip",
     "dadjoke",
-    "debug",
-    "eval",
     "fun",
+    "gacha",
     "giveaway",
+    "help",
     "inbox",
     "interactions",
     "leaderboard",
+    "level",
     "linkaccount",
     "randommeme",
     "restart",
     "search",
     "steal",
-    "suggest",
+    "system",
     "tmusic",
 )
 
@@ -58,10 +66,13 @@ COMMAND_MODULES: Final[tuple[str, ...]] = (
 # ============================================================
 
 INTEGRATION_MODULES: Final[tuple[str, ...]] = (
+    "coins",
     "collectionreply",
     "counting",
-    "generatecode",
+    "gacha-int",
     "github",
+    "guild_xp",
+    "staffguide",
     "xp",
 )
 
@@ -72,10 +83,17 @@ INTEGRATION_MODULES: Final[tuple[str, ...]] = (
 
 
 UTILITY_MODULES: Final[tuple[str, ...]] = (
+    "api",
     "database",
     "emoji",
+    "error",
+    "generatecode",
     "info",
+    "level_card",
+    "mathematical_random",
     "randomizer",
+    "xp",
+    "xp_announcment",
 )
 
 

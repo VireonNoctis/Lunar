@@ -26,22 +26,29 @@ Install:
 
 discord.py
 aiohttp
-Flask
-scylla-driver
-akinator
+akinator.py
 python-dotenv
 Pillow
+psycopg[binary]
+psycopg-pool
 
-Dashboard dependencies:
+Dashboard dependencies (optional — only if you run dashboard/backend):
 
 fastapi
 pydantic
+uvicorn
+
+Also optional, and gracefully skipped if not installed — the
+dashboard backend degrades cleanly without them (no Redis
+pub/sub, no SQL persistence, but it still runs):
+
 aioredis
 SQLAlchemy
 
-Optional dashboard server:
+Standalone Telegram bots (optional — only if you run telegram/bots/*.py):
 
-uvicorn
+python-telegram-bot
+httpx
 
 ---
 
@@ -49,9 +56,13 @@ uvicorn
 
 ---
 
+Main bot only:
+
+python -m pip install -U discord.py aiohttp akinator.py python-dotenv Pillow "psycopg[binary]" psycopg-pool
+
 Main bot + dashboard:
 
-python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv Pillow fastapi pydantic aioredis SQLAlchemy uvicorn
+python -m pip install -U discord.py aiohttp akinator.py python-dotenv Pillow "psycopg[binary]" psycopg-pool fastapi pydantic uvicorn
 
 ---
 
@@ -64,21 +75,21 @@ Linux/macOS:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv Pillow fastapi pydantic aioredis SQLAlchemy uvicorn
+python -m pip install -U discord.py aiohttp akinator.py python-dotenv Pillow "psycopg[binary]" psycopg-pool fastapi pydantic uvicorn
 
 Windows PowerShell:
 
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv Pillow fastapi pydantic aioredis SQLAlchemy uvicorn
+python -m pip install -U discord.py aiohttp akinator.py python-dotenv Pillow "psycopg[binary]" psycopg-pool fastapi pydantic uvicorn
 
 Windows CMD:
 
 py -3 -m venv .venv
 .venv\Scripts\activate
 python -m pip install --upgrade pip
-python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv Pillow fastapi pydantic aioredis SQLAlchemy uvicorn
+python -m pip install -U discord.py aiohttp akinator.py python-dotenv Pillow "psycopg[binary]" psycopg-pool fastapi pydantic uvicorn
 
 ---
 
@@ -91,39 +102,52 @@ Discord bot framework, commands, slash commands, views,
 buttons, modals, events, cogs and tasks.
 
 aiohttp
-Asynchronous HTTP requests used by Lunar integrations
-and external APIs.
+Asynchronous HTTP requests. Also the transport used internally
+by cogs/utilities/lunarapi.py, the shared client every cog uses
+to talk to the Lunar API (XP, coins, gacha, profile lookups,
+status pings).
 
-Flask
-Used by the Lunar API/status integration.
-
-scylla-driver
-Provides the cassandra.* modules used by Lunar's ScyllaDB
-database layer.
-
-akinator
-Required by the Akinator command.
+akinator.py
+Required by the /aki command. Note the PyPI package name is
+"akinator.py" even though the code just does "import akinator".
 
 python-dotenv
 Loads the project's .env file automatically.
 
 Pillow
-Required for image generation and level-card rendering.
+Required for image generation and level-card rendering
+(cogs/utilities/level_card.py).
 
-fastapi
-Dashboard/backend API framework.
+psycopg[binary]
+PostgreSQL driver. Lunar's database layer (cogs/utilities/database.py)
+is PostgreSQL, not ScyllaDB/Cassandra — install this with the
+[binary] extra so you don't need local PostgreSQL build tools.
 
-pydantic
-Request and data models used by the dashboard.
+psycopg-pool
+Async connection pooling for psycopg (AsyncConnectionPool),
+used by the same database layer.
+
+fastapi / pydantic / uvicorn
+Only needed if you run the dashboard backend
+(dashboard/backend/main.py). Skip these if you're only running
+the Discord bot.
 
 aioredis
-Optional Redis support used by the dashboard.
+Optional Redis pub/sub support for the dashboard backend — it's
+imported inside a try/except, so the dashboard runs fine without
+it (just without Redis-backed features).
 
 SQLAlchemy
-Optional SQL database support used by the dashboard.
+Optional synchronous SQL persistence for the dashboard backend —
+also try/except-imported, also optional. Note this is a
+completely separate DB connection from the bot's own psycopg
+layer, even though both currently read the same DATABASE_URL by
+default.
 
-uvicorn
-ASGI server used to run the FastAPI dashboard.
+python-telegram-bot / httpx
+Only needed for the standalone Telegram bots under telegram/bots/
+(lunar.py, nova.py, sapphire.py). These are separate processes
+from the Discord bot and are not loaded by bot.py.
 
 ---
 
@@ -131,9 +155,9 @@ ASGI server used to run the FastAPI dashboard.
 
 ---
 
-Create:
+Copy .env.example to .env and fill it in:
 
-.env
+cp .env.example .env
 
 The bot currently expects:
 
@@ -143,7 +167,8 @@ Example:
 
 TOKEN=your_discord_bot_token
 
-Lunar integrations currently use:
+Lunar API integration (XP, coins, gacha, profile lookups — all
+routed through cogs/utilities/lunarapi.py) uses:
 
 lunar_token
 bypass_token
@@ -152,6 +177,26 @@ Example:
 
 lunar_token=your_lunar_api_token
 bypass_token=your_lunar_bypass_token
+
+IMPORTANT — canonical casing: every file that talks to the Lunar
+API reads these two names in lowercase. Older versions of
+.env.example also listed uppercase "LUNAR_TOKEN"/"LUNAR_BYPASS_TOKEN"
+aliases — nothing in the codebase reads those anymore (that was
+actually a live bug: cogs/commands/linkaccount.py used to read
+the uppercase names while everything else read lowercase, which
+meant account-linking's API calls silently ran with no auth token
+if only the lowercase vars were set). Only set the lowercase
+lunar_token / bypass_token now.
+
+PostgreSQL connection (see section 9):
+
+DATABASE_URL
+  -- or individually --
+PGHOST
+PGPORT (default 5432)
+PGUSER / POSTGRES_USER
+PGPASSWORD / POSTGRES_PASSWORD
+PGDATABASE / POSTGRES_DB (default "lunar")
 
 T-Music may use:
 
@@ -197,26 +242,35 @@ Then place the bot token in:
 
 ---
 
-9. SCYLLADB
+9. DATABASE — POSTGRESQL
 
 ---
 
-The bot requires a ScyllaDB/Cassandra-compatible database.
+Lunar's database layer (cogs/utilities/database.py) runs on
+PostgreSQL via psycopg + psycopg_pool. It is NOT ScyllaDB or
+Cassandra, despite older docs/wiring in this project claiming
+otherwise — the "scylla-driver" package that used to be listed
+here does not exist anywhere in the actual import graph.
 
-The Python package:
+Point the bot at your PostgreSQL instance with either a single
+DSN:
 
-scylla-driver
+DATABASE_URL=postgresql://user:password@host:5432/lunar
 
-is only the Python driver.
+...or individual vars (all optional, sensible defaults shown):
 
-It does NOT install the database server itself.
+PGHOST=127.0.0.1
+PGPORT=5432
+PGUSER=your_postgres_user
+PGPASSWORD=your_postgres_password
+PGDATABASE=lunar
 
-The current database configuration expects a local database by default.
+The bot creates its own tables on startup (see the CREATE TABLE
+statements in cogs/utilities/database.py) — you just need an
+empty database and working credentials.
 
-Typical:
-
-Host: 127.0.0.1
-Port: 9042
+Make sure PostgreSQL is running and reachable before starting
+Lunar.
 
 ---
 
@@ -228,13 +282,12 @@ The dashboard backend is located at:
 
 dashboard/backend/main.py
 
+It's a small FastAPI app — only fastapi, pydantic and uvicorn are
+needed to run it, nothing else.
+
 To run it with Uvicorn:
 
 uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000
-
-Redis is optional in the current dashboard implementation.
-
-SQLAlchemy database support is also optional.
 
 ---
 
@@ -265,7 +318,6 @@ secrets
 string
 struct
 sys
-threading
 time
 traceback
 types
@@ -284,6 +336,10 @@ From the Lunar project root:
 
 python bot.py
 
+Lunar auto-discovers every .py file under cogs/ (except
+cogs/utilities/) at startup and loads each as a cog — new cog
+files don't need to be registered anywhere by hand.
+
 ---
 
 13. QUICK SETUP
@@ -300,7 +356,7 @@ python -m pip install --upgrade pip
 
 Then:
 
-python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv Pillow fastapi pydantic aioredis SQLAlchemy uvicorn
+python -m pip install -U discord.py aiohttp akinator.py python-dotenv Pillow "psycopg[binary]" psycopg-pool fastapi pydantic uvicorn
 
 Create:
 
@@ -309,11 +365,14 @@ Create:
 Set:
 
 TOKEN=your_discord_bot_token
+lunar_token=your_lunar_api_token
+bypass_token=your_lunar_bypass_token
+DATABASE_URL=postgresql://user:password@host:5432/lunar
 
 Configure the other API credentials required by the enabled
-features.
+features (T-Music/Spotify/YouTube/SoundCloud if you use it).
 
-Start ScyllaDB.
+Make sure PostgreSQL is running and reachable.
 
 Then start Lunar:
 
@@ -329,17 +388,22 @@ Required:
 
 discord.py
 aiohttp
-Flask
-scylla-driver
-akinator
+akinator.py
 python-dotenv
 Pillow
+psycopg[binary]
+psycopg-pool
+
+Optional (dashboard):
+
 fastapi
 pydantic
+uvicorn
 aioredis
 SQLAlchemy
-uvicorn
 
-FINAL INSTALL COMMAND:
+FINAL INSTALL COMMAND (bot + dashboard):
 
-python -m pip install -U discord.py aiohttp Flask scylla-driver akinator python-dotenv Pillow fastapi pydantic aioredis SQLAlchemy uvicorn
+python -m pip install -U discord.py aiohttp akinator.py python-dotenv Pillow "psycopg[binary]" psycopg-pool fastapi pydantic uvicorn aioredis SQLAlchemy
+
+---

@@ -6,6 +6,7 @@ from typing import Any
 import discord
 from discord import app_commands
 from discord.ext import commands
+
 from cogs.utilities.emoji import EMOJI
 
 
@@ -130,24 +131,23 @@ HELP_PAGES: dict[str, dict[str, Any]] = {
     "giveaways": {
         "label": "Giveaways",
         "emoji": GIVEAWAY,
-        "short": "/gcreate, gend, greroll, grewards...",
+        "short": "/gcreate, gend, greroll, gverify...",
         "description": (
             f"## {GIVEAWAY} Giveaway Commands *(staff — Manage Server)*\n\n"
             "**`/gcreate`**\n"
             "Opens a modal to set the prize, duration, and winner "
             "count. Entrants must have a **linked, verified** "
             "Lunar account to enter.\n\n"
-            "**`/grewards`** `giveaway`\n"
-            "Configure what winners automatically receive when "
-            "the giveaway ends — opens a dropdown with 5 options "
-            "(Gacha Card / XP / Coins / Donator Role / Other), "
-            "each followed by a one-field modal for the detail "
-            "that type needs. The winner count is never asked "
-            "again — it reuses whatever `/gcreate` already set.\n\n"
+            "**Configure Rewards**\n"
+            "During `/gcreate`, use the **Configure Rewards** button "
+            "on the confirmation menu to choose what winners "
+            "automatically receive when the giveaway ends. The "
+            "reward picker supports Gacha Card / XP / Coins / "
+            "Donator Role / Other.\n\n"
             "**`/gend`** `giveaway`\n"
             "Ends a giveaway immediately and draws winners using "
             "the cryptographic randomizer. If rewards were "
-            "configured via `/grewards`, they're granted "
+            "configured during `/gcreate`, they're granted "
             "automatically and the result announcement shows "
             "exactly who received what.\n\n"
             "**`/greroll`** `giveaway`\n"
@@ -370,7 +370,7 @@ HELP_PAGES: dict[str, dict[str, Any]] = {
             "tradeable versus how many exist in total.\n\n"
             "### Giveaway Gacha Rewards\n"
             "When a giveaway host configures a **Gacha Card** "
-            "reward via `/grewards`, the bot double-checks the "
+            "reward via the `/gcreate` Configure Rewards menu, the bot double-checks the "
             "card actually exists in the live catalog *before* "
             "saving the config — so a typo'd card name gets "
             "caught immediately instead of failing silently when "

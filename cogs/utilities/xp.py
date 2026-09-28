@@ -567,3 +567,145 @@ def progress_ratio(
             current_xp / required_xp,
         ),
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# LEVEL-UP COIN REWARDS
+# ─────────────────────────────────────────────────────────────
+#
+# Shared by the website XP grant (cogs/integrations/xp.py) and
+# the Guild XP system (cogs/integrations/guild_xp.py), so both
+# "level up" paths pay out the same curve of coins.
+# ─────────────────────────────────────────────────────────────
+
+BASE_LEVEL_UP_COINS = 25
+LEVEL_UP_COIN_GROWTH = 0.08  # +8% per level, compounding
+
+MAX_LEVEL_UP_COINS = 5_000  # hard ceiling per single level crossed
+
+
+def coins_for_level(
+    level: int,
+) -> int:
+    """
+    Coins awarded for reaching `level`.
+
+    Grows with level so higher levels are worth more:
+
+        level 1  -> 25
+        level 10 -> ~50
+        level 25 -> ~158
+        level 50 -> ~1,174
+
+    Capped by MAX_LEVEL_UP_COINS so runaway levels can't mint an
+    unbounded amount of coins in one grant.
+    """
+
+    level = max(1, int(level))
+
+    raw = BASE_LEVEL_UP_COINS * (
+        (1 + LEVEL_UP_COIN_GROWTH)
+        ** (level - 1)
+    )
+
+    return min(
+        MAX_LEVEL_UP_COINS,
+        max(
+            BASE_LEVEL_UP_COINS,
+            int(raw),
+        ),
+    )
+
+
+def coins_for_level_range(
+    previous_level: int,
+    new_level: int,
+) -> int:
+    """
+    Total coin reward for going from `previous_level` to
+    `new_level`, summing the reward for every level crossed.
+
+    Handles multi-level jumps (e.g. a big manual XP grant that
+    pushes someone up several levels at once) fairly, rather than
+    only paying out for the final level reached.
+    """
+
+    previous_level = max(1, int(previous_level))
+    new_level = max(previous_level, int(new_level))
+
+    if new_level <= previous_level:
+        return 0
+
+    return sum(
+        coins_for_level(level)
+        for level in range(
+            previous_level + 1,
+            new_level + 1,
+        )
+    )
+
+
+def format_coins(
+    amount: int,
+) -> str:
+    return f"{max(0, int(amount)):,}"
+
+
+# ─────────────────────────────────────────────────────────────
+# ROLE BONUS MULTIPLIERS
+# ─────────────────────────────────────────────────────────────
+#
+# Shared by every XP/coin grant path (website message XP, website
+# message coins, Guild XP, and level-up coin rewards) so a member
+# gets the same bonus no matter which system pays them out.
+#
+# Stacks additively: having both roles is better than either
+# alone. 1.0 = no bonus, so e.g. 0.50 == +50%.
+# ─────────────────────────────────────────────────────────────
+
+ROLE_BONUS_MULTIPLIERS: dict[int, float] = {
+    1515063228223455442: 0.50,  # Website Donator -> +50%
+    1368999154788995093: 0.25,  # Server Booster   -> +25%
+}
+
+
+def role_bonus_multiplier(
+    role_ids,
+) -> float:
+    """
+    Sum the configured bonus percentages for any of the given
+    role IDs and return it as a multiplier (1.0 = no bonus).
+    """
+
+    bonus = 0.0
+
+    for role_id in role_ids:
+        try:
+            bonus += ROLE_BONUS_MULTIPLIERS.get(
+                int(role_id),
+                0.0,
+            )
+        except (TypeError, ValueError):
+            continue
+
+    return 1.0 + bonus
+
+
+def member_bonus_multiplier(
+    member,
+) -> float:
+    """
+    Convenience wrapper: pull role IDs off a discord.Member-like
+    object (anything with a `.roles` iterable of objects that
+    have an `.id`). Returns 1.0 (no bonus) for anything else,
+    such as a plain discord.User with no roles attribute.
+    """
+
+    roles = getattr(member, "roles", None)
+
+    if not roles:
+        return 1.0
+
+    return role_bonus_multiplier(
+        role.id for role in roles
+    )

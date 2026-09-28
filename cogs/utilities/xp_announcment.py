@@ -24,8 +24,7 @@ class XPAnnouncement:
     """
 
     # Set this to the Discord channel where level-ups should be sent.
- 
-    ANNOUNCEMENT_CHANNEL_ID = 0
+    ANNOUNCEMENT_CHANNEL_ID = 1554155065562890380
 
     EMBED_COLOR = 0x7C3AED
 
@@ -76,6 +75,7 @@ class XPAnnouncement:
         current_xp: int,
         required_xp: int,
         total_xp: int,
+        coins_awarded: int = 0,
     ) -> discord.Embed:
         """
         Build the Lunar-styled level-up embed.
@@ -147,6 +147,13 @@ class XPAnnouncement:
             ),
             inline=False,
         )
+
+        if coins_awarded > 0:
+            embed.add_field(
+                name="🪙 Level-Up Bonus",
+                value=f"**+{coins_awarded:,} coins**",
+                inline=False,
+            )
 
         embed.set_thumbnail(
             url=member.display_avatar.url
@@ -274,6 +281,12 @@ class XPAnnouncement:
             total_xp=int(
                 result.get(
                     "xp",
+                    0,
+                )
+            ),
+            coins_awarded=int(
+                result.get(
+                    "coins_awarded",
                     0,
                 )
             ),

@@ -1,14 +1,16 @@
 import logging
-import os
-import random
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from urllib.parse import quote
-import aiohttp
 import discord
 from discord.ext import commands
 
 from cogs.utilities.database import db
+from cogs.utilities.mathematical_random import secure_rng
+from cogs.utilities.xp import (
+    coins_for_level_range,
+    member_bonus_multiplier,
+)
+from cogs.utilities.lunarapi import lunarapi
 
 
 log = logging.getLogger("lunar.xp")
@@ -18,15 +20,9 @@ log = logging.getLogger("lunar.xp")
 # Configuration
 # ============================================================
 
-LUNAR_XP_API = "https://api.lunarx.to/api/admin/users/give-xp"
-LUNAR_PROFILE_API = (
-    "https://api.lunarx.to/api/animes/profile"
-)
+LUNAR_PROFILE_ENDPOINT = "/api/animes/profile"
 XP_LOG_CHANNEL_ID = 1499281835757404250
 XP_EMBED_CHANNEL_ID = 1514345477188092024
-
-LUNAR_BYPASS_TOKEN = os.getenv("bypass_token")
-LUNAR_TOKEN = os.getenv("lunar_token")
 
 
 # ============================================================
@@ -34,40 +30,18 @@ LUNAR_TOKEN = os.getenv("lunar_token")
 # ============================================================
 
 class XP(commands.Cog):
-    """Message-based Lunar XP system."""
+    """
+    Message-based Lunar XP system.
+
+    HTTP calls go through cogs.utilities.lunarapi (shared session,
+    shared auth) instead of managing its own aiohttp.ClientSession.
+    """
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-        self.http: Optional[aiohttp.ClientSession] = None
-
-    # --------------------------------------------------------
-    # Lifecycle
-    # --------------------------------------------------------
-
     async def cog_load(self) -> None:
-        timeout = aiohttp.ClientTimeout(
-            total=12,
-            connect=5,
-            sock_read=10,
-        )
-
-        self.http = aiohttp.ClientSession(
-            timeout=timeout,
-            headers={
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-                "User-Agent": "LunarDiscordBot/1.0",
-            },
-        )
-
         log.info("XP system loaded")
-
-    async def cog_unload(self) -> None:
-        if self.http and not self.http.closed:
-            await self.http.close()
-
-        log.info("XP system unloaded")
 
     # --------------------------------------------------------
     # Lunar API
@@ -87,60 +61,10 @@ class XP(commands.Cog):
         if amount < 0:
             return None
 
-        if not self.http:
-            log.error("XP HTTP session is not initialized")
-            return None
-
-        if not LUNAR_TOKEN:
-            log.error("Missing lunar_token environment variable")
-            return None
-
-        payload = {
-            "user_id": str(lunar_uuid),
-            "xp": int(amount),
-        }
-
-        headers = {
-            "Authorization": LUNAR_TOKEN,
-            "Content-Type": "application/json",
-        }
-
-        if LUNAR_BYPASS_TOKEN:
-            headers["X-Scraper-Guard-Bypass"] = LUNAR_BYPASS_TOKEN
-
-        try:
-            async with self.http.post(
-                LUNAR_XP_API,
-                json=payload,
-                headers=headers,
-            ) as response:
-
-                if response.status != 200:
-                    body = await response.text()
-
-                    log.error(
-                        "XP API failed: %s | %s",
-                        response.status,
-                        body[:1000],
-                    )
-
-                    return None
-
-                data = await response.json()
-
-                if not isinstance(data, dict):
-                    log.error("XP API returned an invalid response")
-                    return None
-
-                return data
-
-        except (aiohttp.ClientError, TimeoutError) as error:
-            log.exception("XP API request failed: %s", error)
-            return None
-
-        except Exception:
-            log.exception("Unexpected XP API error")
-            return None
+        return await lunarapi.give_xp(
+            lunar_uuid,
+            amount,
+        )
 
     async def get_lunar_profile(
         self,
@@ -157,63 +81,24 @@ class XP(commands.Cog):
         The Discord bot does not store or calculate these values.
         """
 
-        if not self.http:
-            return None
-
         if not lunar_username:
             return None
 
-        encoded_username = quote(
-            str(lunar_username),
-            safe="",
-        )
-
-        url = (
-            f"{LUNAR_PROFILE_API}"
-            f"?username={encoded_username}"
-        )
-
         try:
-            async with self.http.get(
-                url,
-                headers={
-                    "Accept": "application/json",
+            payload = await lunarapi.get(
+                LUNAR_PROFILE_ENDPOINT,
+                authed=False,
+                params={
+                    "username": str(lunar_username),
                 },
-            ) as response:
-                if response.status != 200:
-                    body = await response.text()
+            )
 
-                    log.error(
-                        "Lunar profile API failed: %s | %s",
-                        response.status,
-                        body[:1000],
-                    )
-
-                    return None
-
-                payload = await response.json()
-
-        except (aiohttp.ClientError, TimeoutError):
+        except lunarapi.LunarAPIError:
             log.exception(
                 "Lunar profile request failed for username=%s",
                 lunar_username,
             )
             return None
-
-        except Exception:
-            log.exception(
-                "Unexpected Lunar profile API error "
-                "for username=%s",
-                lunar_username,
-            )
-            return None
-
-        if not isinstance(payload, dict):
-            log.error(
-                "Invalid Lunar profile response type "
-                "for username=%s",
-                lunar_username,
-            )
             return None
 
         data = payload.get("data")
@@ -342,7 +227,7 @@ class XP(commands.Cog):
         content = message.content or ""
         content_length = len(content)
 
-        chance = random.random() * 100
+        chance = secure_rng.random() * 100
         penalty = 1.0
 
         # ----------------------------------------------------
@@ -526,6 +411,7 @@ class XP(commands.Cog):
             (content_length / 10)
             * multiplier
             * penalty
+            * member_bonus_multiplier(guild_member)
         )
 
         if amount <= 0:
@@ -641,6 +527,59 @@ class XP(commands.Cog):
         )
 
         # ----------------------------------------------------
+        # Level-up coin reward
+        # ----------------------------------------------------
+
+        coins_awarded = 0
+
+        if leveled_up:
+            try:
+                previous_level_int = int(previous_level)
+                new_level_int = int(new_level)
+
+            except (TypeError, ValueError):
+                previous_level_int = None
+                new_level_int = None
+
+            if (
+                previous_level_int is not None
+                and new_level_int is not None
+            ):
+                coins_awarded = coins_for_level_range(
+                    previous_level_int,
+                    new_level_int,
+                )
+
+                if isinstance(
+                    message.author,
+                    discord.Member,
+                ):
+                    coins_awarded = int(
+                        coins_awarded
+                        * member_bonus_multiplier(
+                            message.author
+                        )
+                    )
+
+            coins_cog = self.bot.get_cog("Coins")
+
+            if coins_awarded > 0 and coins_cog is not None:
+                await coins_cog.award_level_up_coins(
+                    lunar_uuid=str(lunar_uuid),
+                    amount=coins_awarded,
+                    source="website_level_up",
+                    username=username,
+                )
+
+            elif coins_awarded > 0:
+                log.warning(
+                    "Coins cog not loaded; skipped %s "
+                    "level-up coins for %s",
+                    coins_awarded,
+                    username,
+                )
+
+        # ----------------------------------------------------
         # Channel logging
         # ----------------------------------------------------
 
@@ -676,7 +615,7 @@ class XP(commands.Cog):
 
         if self.bot.user:
             embed.set_author(
-                name="🌙 Lunar XP",
+                name=" Lunar XP",
                 icon_url=self.bot.user.display_avatar.url,
             )
 
@@ -698,6 +637,13 @@ class XP(commands.Cog):
                 value=f":97637pink: **{previous_level}** → **{new_level}**",
                 inline=False,
             )
+
+            if coins_awarded > 0:
+                embed.add_field(
+                    name="🪙 Level-Up Bonus",
+                    value=f"**+{coins_awarded:,} coins**",
+                    inline=False,
+                )
 
         embed.set_footer(text="☾ Lunar XP")
         embed.timestamp = discord.utils.utcnow()

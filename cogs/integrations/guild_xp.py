@@ -11,7 +11,9 @@ import discord
 from discord.ext import commands
 
 from cogs.utilities.database import db
-
+from cogs.utilities.xp_announcment import XPAnnouncement
+rom cogs.utilities.xp import member_bonus_multiplier
+      
 
 log = logging.getLogger("lunar.guild_xp")
 
@@ -60,6 +62,49 @@ class GuildXP(commands.Cog):
 
         # Prevent duplicate processing.
         self._processed_messages: set[int] = set()
+
+        self.announcer = XPAnnouncement(bot)
+
+    # ==============================================================
+    # MESSAGE LISTENER
+    # ==============================================================
+    #
+    # process_message()/award_xp() only compute XP and write to the
+    # database — nothing previously called process_message() from a
+    # live Discord event, so Guild XP never actually accrued from
+    # messages. This listener is what makes it run.
+
+    @commands.Cog.listener()
+    async def on_message(
+        self,
+        message: discord.Message,
+    ) -> None:
+        if message.author.bot:
+            return
+
+        try:
+            result = await self.process_message(message)
+            await self.announcer.handle_result(
+                message.author,
+                result,
+            )
+
+        except Exception as error:
+            from cogs.utilities.error import log_error
+
+            await log_error(
+                error,
+                context="Guild XP Message Processing",
+                bot=self.bot,
+                guild=message.guild,
+                user=message.author,
+                channel=message.channel,
+                extra={"Message ID": message.id},
+            )
+
+        # No process_commands() call here on purpose — the XP cog
+        # already owns that responsibility for on_message. Adding
+        # a second call here would run every command twice.
 
     # ==============================================================
     # XP CURVE
@@ -559,29 +604,17 @@ class GuildXP(commands.Cog):
         member: discord.Member,
     ) -> float:
         """
-        Return the highest configured role multiplier.
+        Return the member's role-based XP bonus multiplier.
 
-        Populate the mapping with the actual Lunar role IDs later.
+        Backed by cogs.utilities.xp.member_bonus_multiplier so
+        Guild XP, website XP, and website coins all use the same
+        role -> bonus mapping. Import is deferred to avoid a
+        circular import: cogs.utilities.xp imports GuildXP at
+        module load time, so importing it back at the top of
+        this file would fail.
         """
 
-        role_multipliers: dict[int, float] = {
-            # ROLE_ID: MULTIPLIER,
-        }
-
-        multiplier = 1.0
-
-        for role in member.roles:
-            multiplier = max(
-                multiplier,
-                float(
-                    role_multipliers.get(
-                        role.id,
-                        1.0,
-                    )
-                ),
-            )
-
-        return multiplier
+        return member_bonus_multiplier(member)
 
     # ==============================================================
     # DATABASE
@@ -820,6 +853,19 @@ class GuildXP(commands.Cog):
             ),
         )
 
+        # ----------------------------------------------------------
+        # LEVEL-UP COIN REWARD
+        # ----------------------------------------------------------
+
+        coins_awarded = 0
+
+        if leveled_up:
+            coins_awarded = await self._award_level_up_coins(
+                message.author,
+                old_level,
+                new_level,
+            )
+
         result = {
             "guild_id": guild_id,
             "user_id": user_id,
@@ -833,6 +879,7 @@ class GuildXP(commands.Cog):
             "leveled_up": leveled_up,
             "role_multiplier": role_multiplier,
             "calculation": calculation,
+            "coins_awarded": coins_awarded,
         }
 
         log.debug(
@@ -850,6 +897,72 @@ class GuildXP(commands.Cog):
         )
 
         return result
+
+    # ==============================================================
+    # LEVEL-UP COIN REWARD
+    # ==============================================================
+
+    async def _award_level_up_coins(
+        self,
+        member: discord.Member,
+        old_level: int,
+        new_level: int,
+    ) -> int:
+        """
+        Pay out website coins for a Guild-level level-up.
+
+        Guild XP is Discord-only, but coins are a website currency,
+        so this resolves the Discord user's linked/verified Lunar
+        account through the Coins cog before granting anything. If
+        the account isn't linked, or the Coins cog isn't loaded,
+        this is a no-op (returns 0) rather than an error.
+
+        Import is deferred to avoid a circular import: cogs.utilities.xp
+        imports GuildXP at module load time, so importing it back at
+        the top of this file would fail.
+        """
+
+        from cogs.utilities.xp import (
+            coins_for_level_range,
+            member_bonus_multiplier,
+        )
+
+        base_coins = coins_for_level_range(
+            old_level,
+            new_level,
+        )
+
+        if base_coins <= 0:
+            return 0
+
+        coins_awarded = int(
+            base_coins
+            * member_bonus_multiplier(member)
+        )
+
+        coins_cog = self.bot.get_cog("Coins")
+
+        if coins_cog is None:
+            log.warning(
+                "Coins cog not loaded; skipped %s "
+                "guild level-up coins for user=%s",
+                coins_awarded,
+                member.id,
+            )
+            return 0
+
+        result = await coins_cog.grant_coins_to_discord_user(
+            member.id,
+            coins_awarded,
+            source="guild_level_up",
+        )
+
+        if result is None:
+            # Not linked/verified, or the grant failed — either
+            # way, no coins actually landed.
+            return 0
+
+        return coins_awarded
 
     # ==============================================================
     # MANUAL XP
@@ -926,6 +1039,17 @@ class GuildXP(commands.Cog):
             total_messages=total_messages,
         )
 
+        leveled_up = new_level > old_level
+
+        coins_awarded = 0
+
+        if leveled_up:
+            coins_awarded = await self._award_level_up_coins(
+                member,
+                old_level,
+                new_level,
+            )
+
         return {
             "guild_id": member.guild.id,
             "user_id": member.id,
@@ -936,10 +1060,9 @@ class GuildXP(commands.Cog):
             "previous_level": old_level,
             "current_level_xp": current_level_xp,
             "required_xp": required_xp,
-            "leveled_up": (
-                new_level > old_level
-            ),
+            "leveled_up": leveled_up,
             "role_multiplier": 1.0,
+            "coins_awarded": coins_awarded,
         }
 
     # ==============================================================

@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
 # ==============================================================================
-#  SAPPHIRE  —  Group moderation bot, part of the Lunar family
+#  Sapphire  —  Group moderation bot, part of the Lunar family 
 #  Developer : @TheSlopKing
 # ==============================================================================
 #
-#  Moderation only — no fun/game/API-toy commands live here. That's Lunar.py's
-#  job. Sapphire is a standalone bot: separate token, separate process,
-#  separate data file. Run both side by side if you want, they never touch
-#  each other's state.
-#
+#  Moderation only.
 #  Requirements:
 #      pip install "python-telegram-bot[job-queue]"
 #
 #  Run:
 #      python3 sapphire.py
 #
-#
-# ==============================================================================
+#   ==============================================================================
 
 from __future__ import annotations
 
@@ -65,8 +60,8 @@ from telegram.ext import (
 
 @dataclass(slots=True)
 class Config:
-    token: str = "PUT_YOUR_BOT_TOKEN_HERE"          # <-- hardcoded, no env file
-    owner_id: int = 0                                 # <-- your numeric Telegram user ID (global super-admin)
+    token: str = "PUT_YOUR_BOT_TOKEN_HERE"    
+    owner_id: int = 0
     developer_handle: str = "@TheSlopKing"
     website: str = "lunarx.to"
     bot_name: str = "Sapphire"
@@ -2344,7 +2339,8 @@ def build_application() -> Application:
 
     # Logging
     for name, handler in {
-        "setlog": cmd_setlog, "unsetlog": cmd_unsetlog, "logstatus": cmd_logstatus, "logtest": cmd_logtest,
+        "setlog": cmd_setlog, "unsetlog": cmd_unsetlog, "logstatus": cmd_logstatus,
+        "logtest": cmd_logtest,
     }.items():
         application.add_handler(CommandHandler(name, handler))
 
@@ -2355,27 +2351,22 @@ def build_application() -> Application:
     }.items():
         application.add_handler(CommandHandler(name, handler))
 
-    # Broadcasts
+    # Broadcasts & scheduling
     for name, handler in {
         "broadcast": cmd_broadcast, "schedule": cmd_schedule, "scheduled": cmd_scheduled,
         "cancelschedule": cmd_cancelschedule,
     }.items():
         application.add_handler(CommandHandler(name, handler))
 
-    # Backup / config management
+    # Settings backup & lists
     for name, handler in {
         "exportsettings": cmd_exportsettings, "importsettings": cmd_importsettings,
         "resetsettings": cmd_resetsettings, "mutelist": cmd_mutelist, "banlist": cmd_banlist,
+        "settings": cmd_settings,
     }.items():
         application.add_handler(CommandHandler(name, handler))
 
-    # Settings menu
-    application.add_handler(CommandHandler("settings", cmd_settings))
-    application.add_handler(CallbackQueryHandler(settings_callback, pattern=r"^settings:"))
-    application.add_handler(CallbackQueryHandler(captcha_callback, pattern=r"^captcha:"))
-
     application.add_error_handler(on_error)
-
     return application
 
 
@@ -2383,19 +2374,17 @@ def main() -> None:
     if CFG.token == "PUT_YOUR_BOT_TOKEN_HERE" or not CFG.token:
         raise SystemExit("🌙 Set CFG.token in sapphire.py before running.")
     if CFG.owner_id == 0:
-        log.warning("CFG.owner_id is unset — the global super-admin override will be unavailable.")
+        log.warning("CFG.owner_id is unset — owner-only commands will be unusable until you set it.")
 
     load_data()
     application = build_application()
 
     if application.job_queue:
         application.job_queue.run_repeating(periodic_flush, interval=30, first=30)
-        register_persisted_jobs(application)
     else:
-        log.warning('Job queue unavailable — install "python-telegram-bot[job-queue]" for captcha '
-                    "timeouts, scheduled broadcasts, and batched stats saving.")
+        log.warning('Job queue unavailable — install "python-telegram-bot[job-queue]" for batched saves.')
 
-    log.info("Sapphire is standing watch — polling for updates.")
+    log.info("Sapphire is online — polling for updates.")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

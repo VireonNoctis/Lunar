@@ -342,7 +342,7 @@ async def log_error(
     # --------------------------------------------------------
 
     embed = discord.Embed(
-        title="{EMOJI['Lunar']} Lunar System Error",
+        title=f"{EMOJI['lunar']} Lunar System Error",
         description=(
             "An exception was raised somewhere inside "
             "the Lunar system.\n\n"
@@ -354,36 +354,37 @@ async def log_error(
         timestamp=now,
     )
 
-embed.add_field(
-    name=f"{EMOJI['system']} Context",
-    value=f"`{truncate(context, 900)}`",
-    inline=True,
-)
-embed.add_field(
-    name=f"{EMOJI['commands']} Command",
-    value=f"`{truncate(command or 'N/A', 900)}`",
-    inline=True,
-)
-embed.add_field(
-    name=f"{EMOJI['health']} Error Type",
-    value=f"`{exception_name(error)}`",
-    inline=True,
-)
-embed.add_field(
-    name="Server",
-    value=f"**{truncate(guild_name, 700)}**\n`{guild_id}`",
-    inline=True,
-)
-embed.add_field(
-    name="Channel",
-    value=f"**{truncate(channel_name, 700)}**\n`{channel_id}`",
-    inline=True,
-)
-embed.add_field(
-    name="User",
-    value=f"**{truncate(user_name, 700)}**\n`{user_id}`",
-    inline=True,
-)
+    embed.add_field(
+        name=f"{EMOJI['system']} Context",
+        value=f"`{truncate(context, 900)}`",
+        inline=True,
+    )
+    embed.add_field(
+        name=f"{EMOJI['commands']} Command",
+        value=f"`{truncate(command or 'N/A', 900)}`",
+        inline=True,
+    )
+    embed.add_field(
+        name=f"{EMOJI['health']} Error Type",
+        value=f"`{exception_name(error)}`",
+        inline=True,
+    )
+    embed.add_field(
+        name="Server",
+        value=f"**{truncate(guild_name, 700)}**\n`{guild_id}`",
+        inline=True,
+    )
+    embed.add_field(
+        name="Channel",
+        value=f"**{truncate(channel_name, 700)}**\n`{channel_id}`",
+        inline=True,
+    )
+    embed.add_field(
+        name="User",
+        value=f"**{truncate(user_name, 700)}**\n`{user_id}`",
+        inline=True,
+    )
+
     # --------------------------------------------------------
     # Extra context
     # --------------------------------------------------------
@@ -413,18 +414,18 @@ embed.add_field(
     # Footer
     # --------------------------------------------------------
 
-embed.set_footer(
-    text=f"Lunar Error Logger • {fingerprint[:12]}"
-)
+    embed.set_footer(
+        text=f"Lunar Error Logger • {fingerprint[:12]}"
+    )
 
     # --------------------------------------------------------
     # Full traceback attachment
     # --------------------------------------------------------
 
-traceback_file = discord.File(
-    BytesIO(traceback_text.encode("utf-8", errors="replace")),
-    filename=f"lunar_error_{utc_now():%Y%m%d_%H%M%S}.txt",
-)
+    traceback_file = discord.File(
+        BytesIO(traceback_text.encode("utf-8", errors="replace")),
+        filename=f"lunar_error_{utc_now():%Y%m%d_%H%M%S}.txt",
+    )
 
     # --------------------------------------------------------
     # Send safely

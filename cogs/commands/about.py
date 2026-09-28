@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import aiohttp
 
 import discord
 
@@ -15,6 +14,7 @@ from cogs.utilities.info import (
     get_developers,
     get_uptime,
 )
+from cogs.utilities.lunarapi import lunarapi
 
 
 # ============================================================
@@ -24,75 +24,33 @@ from cogs.utilities.info import (
 LUNAR_WEBSITE = "https://lunarx.to"
 LUNAR_API = "https://api.lunarx.to"
 
-HTTP_TIMEOUT = aiohttp.ClientTimeout(
-    total=10,
-    connect=5,
-    sock_connect=5,
-    sock_read=5,
-)
-
 
 # ============================================================
 # STATUS
 # ============================================================
 
-async def fetch_status(
-    session: aiohttp.ClientSession,
-    url: str,
-) -> tuple[int | None, float | None]:
-
-    started = asyncio.get_running_loop().time()
-
-    try:
-        async with session.get(
-            url,
-            allow_redirects=True,
-        ) as response:
-
-            elapsed = (
-                asyncio.get_running_loop().time()
-                - started
-            ) * 1000
-
-            return (
-                response.status,
-                round(elapsed, 2),
-            )
-
-    except Exception:
-
-        return (
-            None,
-            None,
-        )
-
-
 async def get_lunar_status() -> dict[str, object]:
 
-    async with aiohttp.ClientSession(
-        timeout=HTTP_TIMEOUT
-    ) as session:
+    website_task = lunarapi.ping(
+        LUNAR_WEBSITE,
+    )
 
-        website_task = fetch_status(
-            session,
-            LUNAR_WEBSITE,
-        )
+    api_task = lunarapi.ping(
+        LUNAR_API,
+    )
 
-        api_task = fetch_status(
-            session,
-            LUNAR_API,
-        )
-
-        website, api = await asyncio.gather(
-            website_task,
-            api_task,
-        )
+    website, api = await asyncio.gather(
+        website_task,
+        api_task,
+    )
 
     return {
         "website_status": website[0],
         "website_latency": website[1],
+        "website_error": website[2],
         "api_status": api[0],
         "api_latency": api[1],
+        "api_error": api[2],
     }
 
 

@@ -19,7 +19,7 @@ EMOJI = MappingProxyType({
     "gift": "<a:gift1:1554106075899232277>",
     "gift1": "<:gift:1551221177832181791>",
     "dcloading": "<a:discordloading:1550505642580770947>",
-    "soldout"; "<a:soldout:1554118944040947732>", # For gacha Cards that are x/x mints and other stuff.
+    "soldout": "<a:soldout:1554118944040947732>", # For gacha Cards that are x/x mints and other stuff.
     "xp": "<a:xp:1554150338733408437>",
     "leaderboard": "<a:leaderboard1:1554151263837364234>",
       # need to add Coins.

@@ -1,9 +1,11 @@
 from __future__ import annotations
+
 import logging
 import os
 import time
 from typing import Any, Optional
 from urllib.parse import quote
+
 import aiohttp
 
 
@@ -27,6 +29,8 @@ GACHA_ADMIN_CARDS_ENDPOINT = "/api/gacha/admin/cards"
 GACHA_ADMIN_CARD_COVERS_ENDPOINT = "/api/gacha/admin/card-covers"
 GACHA_SERIALS_ENDPOINT = "/api/gacha/serials/{template_id}"
 GACHA_GIFT_ENDPOINT = "/api/gacha/admin/gift"
+NOVEL_SEARCH_ENDPOINT = "/api/novels/db/search"
+NOVEL_DETAIL_ENDPOINT = "/api/novels/title/{slug}"
 
 
 # ============================================================
@@ -376,6 +380,69 @@ async def gift_gacha_card(
                 "recipient": str(recipient),
                 "template_id": str(template_id),
             },
+        )
+
+    except LunarAPIError:
+        return None
+
+    return result if isinstance(result, dict) else None
+
+
+# ============================================================
+# Typed helpers — novel endpoints
+# ============================================================
+
+async def search_novels(
+    query: str,
+    *,
+    page: int = 1,
+    limit: int = 30,
+    sort: str = "relevance",
+    order: str = "desc",
+) -> Optional[dict[str, Any]]:
+    """
+    GET /api/novels/db/search
+
+    Public endpoint. Returns the parsed response dict — the novel
+    list lives under result["novels"], with "total"/"total_pages"
+    for pagination. Returns None on failure.
+    """
+
+    try:
+        result = await get(
+            NOVEL_SEARCH_ENDPOINT,
+            authed=False,
+            params={
+                "query": str(query),
+                "page": int(page),
+                "limit": int(limit),
+                "sort": sort,
+                "order": order,
+            },
+        )
+
+    except LunarAPIError:
+        return None
+
+    return result if isinstance(result, dict) else None
+
+
+async def get_novel(
+    slug: str,
+) -> Optional[dict[str, Any]]:
+    """
+    GET /api/novels/title/{slug}
+
+    Public endpoint. Returns the parsed response dict — the novel
+    itself lives under result["novel"]. Returns None on failure.
+    """
+
+    try:
+        result = await get(
+            NOVEL_DETAIL_ENDPOINT.format(
+                slug=quote(str(slug), safe="")
+            ),
+            authed=False,
         )
 
     except LunarAPIError:

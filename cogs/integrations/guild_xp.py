@@ -12,7 +12,7 @@ from discord.ext import commands
 
 from cogs.utilities.database import db
 from cogs.utilities.xp_announcment import XPAnnouncement
-rom cogs.utilities.xp import member_bonus_multiplier
+from cogs.utilities.xp import member_bonus_multiplier
       
 
 log = logging.getLogger("lunar.guild_xp")

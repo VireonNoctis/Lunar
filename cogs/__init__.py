@@ -52,11 +52,13 @@ COMMAND_MODULES: Final[tuple[str, ...]] = (
     "leaderboard",
     "level",
     "linkaccount",
+    "nightshift",
+    "proof",
     "randommeme",
     "restart",
-    "search",
     "steal",
     "system",
+    "tide",
     "tmusic",
 )
 

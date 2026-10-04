@@ -15,22 +15,42 @@ EMOJI = MappingProxyType({
     "denied": "<a:rejectdecline:1554117241266634802>",
     "error": "<:error:1554117850074193940>",
     "question": "<a:question:1554118169612914708>",
-    "loading": "<a:mainloading:1554114570631651358>", #main loading for Bot.
+    "loading": "<a:mainloading:1554114570631651358>",  # main loading for Bot.
     "gift": "<a:gift1:1554106075899232277>",
     "gift1": "<:gift:1551221177832181791>",
     "dcloading": "<a:discordloading:1550505642580770947>",
-    "soldout": "<a:soldout:1554118944040947732>", # For gacha Cards that are x/x mints and other stuff.
+    "soldout": "<a:soldout:1554118944040947732>",  # For gacha Cards that are x/x mints and other stuff.
     "xp": "<a:xp:1554150338733408437>",
     "leaderboard": "<a:leaderboard1:1554151263837364234>",
-      # need to add Coins.
+    "coins": "<:coins:1556394474182152343>", 
+
+    # ─────────────────────────────
+    # Lunar Tide (economy game) — plain unicode placeholders.
+    # ─────────────────────────────
+    "vault": "🔒",
+    "raid": "🗝️",
+    "scry": "👁️",
+    "ward": "🛡️",
+    "bazaar": "🏮",
+    "charm": "🔮",
+    "ascend": "✨",
+    "tidalevent": "🌊",
+    "constellation": "✦",
 
     # ─────────────────────────────
     # Gacha/Cards
     # ─────────────────────────────
-    "cards": "<:cards:1554126900715196579>", # all Gacha Based stuff should use this
+    "cards": "<:cards:1554126900715196579>",  # all Gacha Based stuff should use this
     "ATK": "<:Attack:1554137157084516422>",
     "HP": "<:HP:1554137978048348250>",
     "DEF": "<:Defense:1554137975447752845>",
+
+    # ─────────────────────────────
+    # /browse media types 
+    # ─────────────────────────────
+    "animetype": "<a:tv:1556393346501714031>",
+    "mangatype": "<a:book:1556393349756362873>",
+    "noveltype": "<:novel:1556393354496057424>",
 
     # ─────────────────────────────
     # Staff
@@ -42,11 +62,11 @@ EMOJI = MappingProxyType({
     # Branding
     # ─────────────────────────────
     "moon": "<:moon:1554114955874406410>",
-    "lunar": "<:Lunar:1550506869557174365>", # Main Brand Emoji.
-    "crown": "<a:crown:1554107984433385522>", # Can Be used for Giveaway Winners, Leaderboard and Owners.
-    "Owner": "<a:Owner:1550461325426036797>", # Bot Owner.
-    "Donator": "<a:Donator:1550461328529817671>", # Website and Server Donor/Donators.
-    "Live": "<a:live:1554123191016890398>", # If Bot is Live.
+    "lunar": "<:Lunar:1550506869557174365>",  # Main Brand Emoji.
+    "crown": "<a:crown:1554107984433385522>",  # Can Be used for Giveaway Winners, Leaderboard and Owners.
+    "Owner": "<a:Owner:1550461325426036797>",  # Bot Owner.
+    "Donator": "<a:Donator:1550461328529817671>",  # Website and Server Donor/Donators.
+    "Live": "<a:live:1554123191016890398>",  # If Bot is Live.
 
     # ─────────────────────────────
     # Decorative
@@ -56,7 +76,7 @@ EMOJI = MappingProxyType({
     "update3": "<:update3:1550505619881074688>",
     "update2": "<:update2:1550505614604509345>",
     "update1": "<:update1:1550505611630870651>",
-# All Emojis. Above Must be Placed Together in order (1,2,3) With NO Space.
+    # All Emojis. Above Must be Placed Together in order (1,2,3) With NO Space.
     "aniheart": "<a:animatedheart:1554114370919989429>",
 
     # ─────────────────────────────
